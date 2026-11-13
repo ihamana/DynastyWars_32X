@@ -61,6 +61,7 @@
 
 ## 授權與第三方
 
+- 本專案（移植程式、工具、腳本、中繼資料）採用 **CC BY-NC-SA 4.0**（姓名標示－非商業性－相同方式分享），作者 Mana，見 `LICENSE`。
 - 遊戲本體《天地を喰らう》© CAPCOM。本專案與 Capcom 無關，請使用你合法擁有的 ROM。
 - `dw/ref/m68k*`：Musashi（Karl Stenerud，MIT）。`dw/ref/z80.c`：superzazu/z80（MIT）。`third_party/ymfm`：Aaron Giles（BSD-3-Clause）。
 - `x32/p1/md/icd_block.inc`：32X 開機必需的 MARS 初始化／安全碼（32X 自製軟體的標準內容）。
@@ -72,3 +73,4 @@
 **English summary.** A port of Capcom's CPS1 arcade game *Dynasty Wars* (Japanese set `dynwarj`) to Sega Mega Drive + 32X + Mega-CD.
 This repository contains **no Capcom data**: code, graphics, music and text are regenerated at build time from your own MAME
 `dynwar.zip`. Build with Docker: `./build.sh /path/to/dynwar.zip` (Windows: `.\build.ps1 C:\path\to\dynwar.zip`); output in `out/`.
+License: CC BY-NC-SA 4.0 for this project's own work (see `LICENSE`); third-party parts keep their own licenses.

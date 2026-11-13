@@ -1,0 +1,6 @@
+3000A
+32B68
+371F4
+371F8
+04472A
+040EE0 V3.11 (inside move.w ($28,PC,D1.w),D1 at 0x40EDE)

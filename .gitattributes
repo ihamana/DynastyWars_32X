@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.bin binary
+*.dwpx binary
+*.dwss binary
+*.xlsx binary
+*.ttf binary
+*.ps1 text eol=crlf

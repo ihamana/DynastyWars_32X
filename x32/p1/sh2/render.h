@@ -1,0 +1,11 @@
+void render_init(void);
+void render_logic_done(void);
+void render_loop(void);
+extern volatile u32 frames_drawn;
+void render_vint(void);
+void render_slave(void);
+extern u16 io_cpsa[0x20], io_cpsb[0x20];
+extern u16 cpspal_live[2048];
+extern volatile u32 pal_serial;
+extern u8 *m68_page[256];
+void s1_base_changed(void);

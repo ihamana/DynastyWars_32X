@@ -1,0 +1,17 @@
+/out/
+/x32/gen/split/
+/x32/gen/nat_tab.h
+/x32/tools/natlist.txt
+/x32/p1/data/
+/x32/p1/build/
+/x32/p1/cd/out/
+/x32/p1/sh2/t16.s
+/d32/tools/libdasm.so
+/dw/ref/sndref
+__pycache__/
+*.pyc
+# never commit the arcade ROMs or anything made from them
+*.zip
+*.32x
+*.iso
+*.wav

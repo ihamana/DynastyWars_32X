@@ -455,3 +455,4 @@
 040EC6 V3.11 chariot state 0 (jump table 0x40EC2)
 040F0E V3.11 chariot state 2
 02C528 V3.11 jump table 0x2C42A
+0420BE

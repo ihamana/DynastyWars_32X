@@ -19,7 +19,7 @@ typedef signed short s16; typedef signed long s32;
 #define TILE_BG0   16
 #define NBG        1500
 #define MAXID      8191
-#define WIN_W 41
+#define WIN_W 43              /* V3.21: 41 shown + 1 on each side (the vblank handler scrolls ahead of the main loop) */
 #define WIN_H 23              /* 176 playfield lines + fine scroll; the HUD (32X) covers the rest */
 
 /* data in the cartridge, seen through the 1MB bank window (0xA15104 = 3: cart 0x300000 at 0x900000) */
@@ -39,6 +39,10 @@ static const u32 *bg_tiles; static const u8 *bg_tline;   /* set when a stage is 
 volatile u16 vdp_busy;                 /* main loop is in a VDP address/data sequence */
 volatile u16 vbl_count;
 volatile u16 sc_pending, sc_hsA, sc_hsB, sc_vsA, sc_vsB;   /* applied by the vblank handler */
+volatile u16 sc_late;                  /* V3.21: a vblank came inside a VDP sequence: scroll when it ends */
+void md_vblank_scroll(void);
+#define VDP_END do { vdp_busy = 0; if (sc_late) { sc_late = 0; vdp_busy = 1; md_vblank_scroll(); vdp_busy = 0; } } while (0)
+volatile u16 sc_live;                  /* V3.21: the planes are up: the vblank handler takes the horizontal scroll straight from COMM */
 
 static inline void vdp_waddr(u16 a) { VDP_CTRLL = 0x40000000UL | ((u32)(a & 0x3FFF) << 16) | (a >> 14); }
 static inline void vdp_reg(u16 r, u16 v) { VDP_CTRL = 0x8000 | (r << 8) | v; }
@@ -80,7 +84,7 @@ static void upload_tile(u16 vtile, u16 id)
     vdp_waddr(vtile << 5);
     VDP_DATAL = src[0]; VDP_DATAL = src[1]; VDP_DATAL = src[2]; VDP_DATAL = src[3];
     VDP_DATAL = src[4]; VDP_DATAL = src[5]; VDP_DATAL = src[6]; VDP_DATAL = src[7];
-    vdp_busy = 0;
+    VDP_END;
 }
 static u16 cache_acquire(u16 id)
 {
@@ -122,6 +126,7 @@ static inline __attribute__((always_inline)) u16 mcell(const BgPlane *p, u16 x, 
     return p->blk[((u32)b << (p->bs << 1)) + ((yy & p->bm) << p->bs) + (x & p->bm)];
 }
 static BgPlane planeA, planeB;
+static u16 cur;                       /* stage whose background is in Word RAM (0xFF none) */
 static inline __attribute__((always_inline)) u16 acquire(u16 e)
 {
     u16 id = (e & 0xFFF) | ((e >> 2) & 0x1000);         /* id bit 12 in bit 14 */
@@ -188,7 +193,7 @@ static void write_run(u16 addr, const u16 *buf, u16 n, u16 inc)
     vdp_waddr(addr);
     while (n--) VDP_DATA = *buf++;
     vdp_reg(15, 2);
-    vdp_busy = 0;
+    VDP_END;
 }
 /* V1.10: the map value (before the cache) of each shown cell, as the VRAM name table (64 x 32): a cell leaving
    the window or rewritten is released from it instead of looking the map up again */
@@ -272,7 +277,7 @@ static void clear_planes(void)
     for (i = 0; i < 0x2000 / 4; i++) VDP_DATAL = 0;     /* plane A + plane B (0xC000-0xFFFF minus SAT/hscroll follow) */
     vdp_waddr(VR_PLANE_B);
     for (i = 0; i < 0x1000 / 4; i++) VDP_DATAL = 0;
-    vdp_busy = 0;
+    VDP_END;
 }
 
 static void anim_apply(u16 c, u16 r, u16 idx)
@@ -291,7 +296,7 @@ static void anim_apply(u16 c, u16 r, u16 idx)
                     u16 m = mcell(p, x, y - p->y0);
                     release(o); SHD(p, x, y) = m;
                     u16 v = acquire(m);
-                    vdp_busy = 1; vdp_waddr(p->vram + ((y & 31) << 7) + ((x & 63) << 1)); VDP_DATA = v; vdp_busy = 0;
+                    vdp_busy = 1; vdp_waddr(p->vram + ((y & 31) << 7) + ((x & 63) << 1)); VDP_DATA = v; VDP_END;
                 }
             }
             ovr[slot][j][i] = 0xFFFF;
@@ -315,11 +320,56 @@ static void anim_apply(u16 c, u16 r, u16 idx)
             if (y < p->cy0 || y >= p->cy0 + WIN_H || x < p->cx0 || x >= p->cx0 + WIN_W) continue;
             release(old); SHD(p, x, y) = neu;
             u16 v = acquire(neu);
-            vdp_busy = 1; vdp_waddr(p->vram + ((y & 31) << 7) + ((x & 63) << 1)); VDP_DATA = v; vdp_busy = 0;
+            vdp_busy = 1; vdp_waddr(p->vram + ((y & 31) << 7) + ((x & 63) << 1)); VDP_DATA = v; VDP_END;
         }
     }
 }
 
+/* V3.21: a whole arcade cell (n x n map cells at x0, y0) from one map block (src: row-major, 0 = nothing), when it lies
+   inside the window and the map: no map lookup per cell, one VDP address per run of changed cells.  (The per-cell path
+   was ~6 scanlines a map cell: the ships changing layer took 45 frames to follow.) */
+static const u16 blk_none[16];
+static inline __attribute__((always_inline)) int blk_inside(const BgPlane *p, s16 x0, s16 y0, u16 n)
+{
+    return x0 >= p->cx0 && x0 + n <= p->cx0 + WIN_W && y0 >= p->cy0 && y0 + n <= p->cy0 + WIN_H
+        && (u16)(x0 + n) <= p->w && y0 >= (s16)p->y0 && (u16)(y0 - p->y0 + n) <= p->h;
+}
+static const u16 line13[4] = { 0, 0x2000, 0x4000, 0x6000 };
+__attribute__((optimize("O2"))) static void blk_set(const BgPlane *p, s16 x0, s16 y0, const u16 *src, u16 n)
+{
+    u16 i, j;
+    const u8 *tl = BG_TLINE - 1;
+    for (j = 0; j < n; j++) {
+        s16 y = y0 + j;
+        u16 *sh = &SHD(p, x0, y), run = 0;
+        for (i = 0; i < n; i++) {
+            u16 neu = *src++, ov = sh[i], id, v = 0;
+            if (neu == ov) { run = 0; continue; }
+            sh[i] = neu;
+            id = (ov & 0xFFF) | ((ov >> 2) & 0x1000);            /* cache_release, inline */
+            if (id) {
+                u16 s1 = id2slot[id];
+                if (s1) {
+                    u16 *rp = &ref[s1 - 1], rr = *rp, c = rr & 0x7FFF;
+                    if (c) {
+                        if (--c == 0 && !(rr & 0x8000)) { fq[fq_tail] = s1 - 1; fq_tail = (fq_tail + 1) & 2047; *rp = 0x8000; }
+                        else *rp = (rr & 0x8000) | c;
+                    }
+                }
+            }
+            id = (neu & 0xFFF) | ((neu >> 2) & 0x1000);          /* acquire: the cached tile inline */
+            if (id) {
+                u16 s1 = id2slot[id], t;
+                if (s1) { ref[s1 - 1]++; t = TILE_BG0 - 1 + s1; }
+                else { if (vdp_busy) { VDP_END; run = 0; } t = cache_acquire(id); }
+                if (t) v = (neu & 0x8000) | line13[tl[id] & 3] | ((neu >> 1) & 0x1800) | t;
+            }
+            if (!run) { vdp_busy = 1; vdp_waddr(p->vram + ((y & 31) << 7) + (((x0 + i) & 63) << 1)); run = 1; }
+            VDP_DATA = v;
+        }
+        if (vdp_busy) VDP_END;
+    }
+}
 /* one harbour cell: show source o (0xFFFF static); visible map cells are rewritten */
 static void o3_set(u16 c, u16 r, u16 o)
 {
@@ -329,6 +379,11 @@ static void o3_set(u16 c, u16 r, u16 o)
     if (o3[sl][r] == o) return;
     if (!p->valid) { o3[sl][r] = o; return; }         /* not shown (or Word RAM away): only remembered */
     o3[sl][r] = o;
+    if (p->bs == 2 && !(p->y0 & 3) && blk_inside(p, x0, y0, 4)) {
+        u16 sc = o == 0xFFFF ? c : (o & 0x7FFF) >> 5, sr = (o == 0xFFFF ? r : o & 31) - (p->y0 >> 2);
+        blk_set(p, x0, y0, p->blk + ((u32)p->bmap[mulu16(sc, p->nby) + sr] << 4), 4);
+        return;
+    }
     for (j = 0; j < 4; j++) for (i = 0; i < 4; i++) {
         s16 x = x0 + i, y = y0 + j;
         if (x < p->cx0 || x >= p->cx0 + WIN_W || y < p->cy0 || y >= p->cy0 + WIN_H) continue;
@@ -337,7 +392,7 @@ static void o3_set(u16 c, u16 r, u16 o)
         if (neu == ov) continue;
         release(ov); SHD(p, x, y) = neu;
         u16 v = acquire(neu);
-        vdp_busy = 1; vdp_waddr(p->vram + ((y & 31) << 7) + ((x & 63) << 1)); VDP_DATA = v; vdp_busy = 0;
+        vdp_busy = 1; vdp_waddr(p->vram + ((y & 31) << 7) + ((x & 63) << 1)); VDP_DATA = v; VDP_END;
     }
 }
 /* one harbour scroll2 cell: show source o; visible map cells are rewritten */
@@ -350,6 +405,15 @@ static void o2_set(u16 sl, u16 r, u16 o)
     if (c < 0 || o2[sl][r] == o) return;
     if (!p->valid) { o2[sl][r] = o; return; }
     o2[sl][r] = o;
+    if (p->bs == 1 && !(p->y0 & 1) && cur != 0 && blk_inside(p, x0, y0, 2)) {   /* (stage 1 has the dust cells: cellv) */
+        const u16 *src = blk_none;
+        if (o != 0xFFFE) {
+            u16 sc = o == 0xFFFF ? (u16)c : o >> 6, sr = (o == 0xFFFF ? r : o & 63) - (p->y0 >> 1);
+            src = p->blk + ((u32)p->bmap[mulu16(sc, p->nby) + sr] << 2);
+        }
+        blk_set(p, x0, y0, src, 2);
+        return;
+    }
     for (j = 0; j < 2; j++) for (i = 0; i < 2; i++) {
         s16 x = x0 + i, y = y0 + j;
         if (x < p->cx0 || x >= p->cx0 + WIN_W || y < p->cy0 || y >= p->cy0 + WIN_H) continue;
@@ -358,7 +422,7 @@ static void o2_set(u16 sl, u16 r, u16 o)
         if (neu == ov) continue;
         release(ov); SHD(p, x, y) = neu;
         u16 v = acquire(neu);
-        vdp_busy = 1; vdp_waddr(p->vram + ((y & 31) << 7) + ((x & 63) << 1)); VDP_DATA = v; vdp_busy = 0;
+        vdp_busy = 1; vdp_waddr(p->vram + ((y & 31) << 7) + ((x & 63) << 1)); VDP_DATA = v; VDP_END;
     }
 }
 static void o2_msg(u16 am, u16 v)
@@ -399,7 +463,7 @@ static void wa_put(u16 vtile, u16 k, u16 ph)
     vdp_waddr(vtile << 5);
     VDP_DATAL = src[0]; VDP_DATAL = src[1]; VDP_DATAL = src[2]; VDP_DATAL = src[3];
     VDP_DATAL = src[4]; VDP_DATAL = src[5]; VDP_DATAL = src[6]; VDP_DATAL = src[7];
-    vdp_busy = 0;
+    VDP_END;
 }
 static void wa_setup(void)
 {
@@ -461,7 +525,6 @@ static void anim_tick(void)
 static inline void msg_ack(void) { COMM(8) = 0; *(volatile u8 *)0xA15103 = 1; }   /* taken: CMD interrupt to the master SH-2 (sends the next) */
 extern void snd_start(void), snd_poll(void), snd_cmd(unsigned char c), snd_vol(u16 k, u16 v);
 extern int snd_bg_ready(void);
-static u16 cur;                       /* stage whose background is in Word RAM (0xFF none) */
 /* ---- V2.1: pictures of the scaled scenes shown on plane A (tools/mdpic.py, after the stage background in Word RAM,
  * header +28).  The 32X sets COMM2 bit 15 with COMM12 = picture id, COMM14 = brightness 0-16 (its reference colour
  * against the live arcade palette: the fades).  Tiles and map go to VRAM, so the picture stays while Word RAM is away. */
@@ -477,7 +540,7 @@ static void pic_level(u16 lv)
         r = (r * lv + 8) >> 4; g = (g * lv + 8) >> 4; b = (b * lv + 8) >> 4;
         VDP_DATA = (b << 9) | (g << 5) | (r << 1);
     }
-    vdp_busy = 0;
+    VDP_END;
     pic_lvl = lv; pic_bgpal = 1;
 }
 static void clear_planes(void);
@@ -500,7 +563,7 @@ static int pic_show(u16 id, u16 lv)
         vdp_waddr(TILE_BG0 << 5);
         for (k = 0; k < nt * 8; k++) VDP_DATAL = tl[k];
         for (y = 0; y < 28; y++) { vdp_waddr(VR_PLANE_A + (y << 7)); for (k = 0; k < 40; k++) VDP_DATA = map[y * 40 + k]; }
-        vdp_busy = 0;
+        VDP_END;
         sc_hsA = sc_hsB = sc_vsA = sc_vsB = 0; sc_pending = 1;
         pic_level(lv);
         return 1;
@@ -515,7 +578,7 @@ static void bg_setup(u16 st)
     vdp_busy = 1;
     VDP_CTRLL = 0xC0000000UL;                    /* CRAM 0..63 = stage palettes (4 lines) */
     for (i = 0; i < 64; i++) VDP_DATA = BG_PAL[i];
-    vdp_busy = 0;
+    VDP_END;
     plane_init(&planeA, BG_MAPA, VR_PLANE_A);
     plane_init(&planeB, BG_MAPB, VR_PLANE_B);
     if (st == 1) wa_setup();
@@ -540,7 +603,7 @@ static void pv_apply(u16 g, u16 v)
             const u16 *c = (const u16 *)cv + v * ns;
             vdp_busy = 1;
             for (i = 0; i < ns; i++) { VDP_CTRLL = 0xC0000000UL | ((u32)(sl[i] << 1) << 16); VDP_DATA = c[i]; }
-            vdp_busy = 0;
+            VDP_END;
             return;
         }
         b = cv + nv * ns * 2; g--;
@@ -559,6 +622,9 @@ void md_main(void)
     for (;;) {
         u16 am = COMM(8);
         dbg_loops++; if (!am) dbg_idle++;
+#ifndef MDNOPOLL
+        { void md_poll_scroll(void); md_poll_scroll(); }
+#endif
         if ((am & 0xA000) == 0xA000) {                   /* dust: the arcade stepped (n times) */
             u16 k = am & 0xFF;
             dbg_ticks += k;
@@ -602,6 +668,7 @@ void md_main(void)
         u16 want = (c >> 9) & 31;                        /* the game's stage (when bit 14) */
         if ((c & 0x4000) && want != cur && want != failed && !loading && cur != 0xFF && !(c & 0x100)) {
             if (on) {                                    /* planes off while Word RAM is away */
+                sc_live = 0;
                 plane_drop(&planeA); plane_drop(&planeB);
                 clear_planes(); cache_reset(); anim_reset();
                 sc_hsA = sc_hsB = sc_vsA = sc_vsB = 0; sc_pending = 1;
@@ -611,6 +678,7 @@ void md_main(void)
         }
         if (c & 0x8000) {                                /* V2.1: a picture (x3 = id, y3 = brightness) */
             if (on) {
+                sc_live = 0;
                 plane_drop(&planeA); plane_drop(&planeB);
                 clear_planes(); cache_reset(); anim_reset();
                 on = 0;
@@ -619,19 +687,20 @@ void md_main(void)
             if (pic_shown == x3 && (u16)y3 != pic_lvl) pic_level(y3);
             continue;
         }
-        if (pic_shown >= 0) { clear_planes(); cache_reset(); pic_shown = -1; planeA.valid = planeB.valid = 0; }
+        if (pic_shown >= 0) { sc_live = 0; clear_planes(); cache_reset(); pic_shown = -1; planeA.valid = planeB.valid = 0; }
         if ((c & 0x100) && cur == want && !loading) {
             s16 ax = x2 + 96, ay = 272 - y2, bx = x3 + 96, by = 272 - y3;
             if (!on) {
-                clear_planes(); cache_reset(); anim_reset(); planeA.valid = planeB.valid = 0; on = 1;
-                if (pic_bgpal) { u16 i; vdp_busy = 1; VDP_CTRLL = 0xC0000000UL; for (i = 0; i < 64; i++) VDP_DATA = BG_PAL[i]; vdp_busy = 0; pic_bgpal = 0; }   /* the stage colours back */
+                sc_live = 0; clear_planes(); cache_reset(); anim_reset(); planeA.valid = planeB.valid = 0; on = 1;
+                if (pic_bgpal) { u16 i; vdp_busy = 1; VDP_CTRLL = 0xC0000000UL; for (i = 0; i < 64; i++) VDP_DATA = BG_PAL[i]; VDP_END; pic_bgpal = 0; }   /* the stage colours back */
             }
-            set_camera(&planeA, ax, ay);
-            set_camera(&planeB, bx, by);
+            set_camera(&planeA, ax - 8, ay);             /* (V3.21: the window starts one column to the left) */
+            set_camera(&planeB, bx - 8, by);
             sc_hsA = -ax; sc_hsB = -bx; sc_vsA = ay; sc_vsB = by;
-            sc_pending = 1;
+            sc_pending = 1; sc_live = 1;
             dbg_bgframes++;
         } else if (on) {
+            sc_live = 0;
             plane_drop(&planeA); plane_drop(&planeB);
             clear_planes(); cache_reset(); anim_reset();
             sc_hsA = sc_hsB = sc_vsA = sc_vsB = 0; sc_pending = 1;
@@ -651,12 +720,36 @@ void md_vblank_count(void)
     for (int i = 0; i < 3; i++) *(volatile u8 *)(0xFF0F24 + i) = *(volatile u8 *)(0xA12029 + i);
     *(volatile u8 *)0xFF0F27 = *(volatile u8 *)0xA12023;   /* sub sound stats (pcm.c) */
 }
+/* V3.21: the horizontal scroll is taken here from the camera the 32X published (COMM2 sequence, COMM4/COMM12), not from
+   the main loop: the main loop can be several frames behind (stage 1 dust animation, harbour cells), which showed as the
+   background moving 3 pixels every 4th frame.  The planes hold one spare column on each side for that lead; farther
+   ahead than that (or a picture / another stage) the main loop's value is used as before.  Vertical: main loop only. */
+static u8 sc_seq;                     /* V3.22: the COMM2 sequence the scroll was last taken from */
 void md_vblank_scroll(void)
 {
-    if (!sc_pending) return;
-    sc_pending = 0;
+    static s16 la, lb;
+    u16 pend = sc_pending; s16 ha = sc_hsA, hb = sc_hsB;
+    if (sc_live) {
+        u16 c = COMM(2);
+        if ((c & 0x8100) == 0x100 && ((c >> 9) & 31) == cur) {
+            s16 ax = (s16)COMM(4) + 96, bx = (s16)COMM(12) + 96;
+            if (COMM(2) == c && planeA.valid && planeB.valid
+                && (u16)((ax >> 3) - planeA.cx0) <= 2 && (u16)((bx >> 3) - planeB.cx0) <= 2) { ha = -ax; hb = -bx; sc_seq = c; }
+        }
+    }
+    if (!pend && ha == la && hb == lb) return;
+    sc_pending = 0; la = ha; lb = hb;
     VDP_CTRLL = 0x40000000UL | ((u32)(VR_HSCROLL & 0x3FFF) << 16) | (VR_HSCROLL >> 14);
-    VDP_DATA = sc_hsA; VDP_DATA = sc_hsB;
+    VDP_DATA = ha; VDP_DATA = hb;
+    if (!pend) return;
     VDP_CTRLL = 0x40000010UL;                            /* VSRAM 0 */
     VDP_DATA = sc_vsA; VDP_DATA = sc_vsB;
+}
+/* V3.22: the 32X often finishes a frame just after the vblank began (stage 8's forest chase): it flips at once, but the
+   vblank handler had already read the old camera -> the background stood still a frame and then jumped.  The main loop
+   looks again while the vblank lasts. */
+void md_poll_scroll(void)
+{
+    if (!sc_live || vdp_busy || !(VDP_CTRL & 8) || (u8)COMM(2) == sc_seq) return;   /* (COMM only in the vblank: PicoDrive takes a loop reading COMM for a wait and pauses the 68000) */
+    vdp_busy = 1; md_vblank_scroll(); VDP_END;
 }

@@ -1,7 +1,7 @@
 /* Front end added for the 32X version (runs on the master SH-2, from the cart):
  *  - pad (raw bits from the MD, COMM0) -> arcade inputs; no coins: START in the attract inserts one
  *  - title screen: the coin prompt is replaced by a START / OPTIONS menu
- *  - OPTIONS: charge speed x1-x4, experience x1-x4, lives 1-9, SFX / music volume 0-10, stage, invincible, button test,
+ *  - OPTIONS: charge speed x1-x4, experience x1-x4, lives 1-9 or infinite (V3.23: value 10), SFX / music volume 0-10, stage, invincible, button test,
  *    exit (the arcade program is paused while it is shown); B enter, A / C back, START exit (V2.3)
  *  - in game: charge / experience gains multiplied; on the continue screen START uses a life (no automatic continue)
  *  - V1.9 2P: pad 2 plays the arcade's player 2; START joins (coin + START 2) while its HUD panel shows the prompt,
@@ -44,6 +44,7 @@ static u16 prev;
 static u16 inj_t;                           /* injected coin/start sequence: frames left */
 static u8 inj_kind;                         /* 1: coin then start, 2: start only, 3: coin only */
 static u8 lives_left, in_continue, playing;
+#define LIVES_INF (ui_opt[2] > 9)               /* V3.23: lives = infinite (shown as the infinity sign): continues never use one up */
 static u8 lives2, joined2, inj_pl;           /* 2P lives (after joining), joined this game, injection for player 2 */
 volatile u8 ui_in2 = 0xFF;                 /* player 2 IN1 byte (main.c: io even bytes) */
 static u16 prev2;
@@ -85,6 +86,9 @@ u16 ui_frame(u16 raw, int *run)
     ui_pad = raw;
     *run = 1;
     u8 scene = WRAM[0x81D8];
+#ifdef UITEST
+    { static u32 fc; if (++fc == UITEST) { ui_mode = 2; ui_sel = 2; ui_opt[2] = 10; } }
+#endif
     if (ui_mode >= 2) {                                   /* options / button test: game paused */
         *run = 0;
         if (ui_mode == 3) {
@@ -97,7 +101,7 @@ u16 ui_frame(u16 raw, int *run)
         if (ui_sel < 8 && (edge & (P_L | P_R))) {
             u8 vol = ui_sel == 3 || ui_sel == 4;
             u8 onoff = ui_sel == 6 || ui_sel == 7;
-            u8 lo = vol || onoff ? 0 : 1, hi = vol ? 10 : ui_sel == 2 ? 9 : ui_sel == 5 ? 8 : onoff ? 1 : 4, v = ui_opt[ui_sel];
+            u8 lo = vol || onoff ? 0 : 1, hi = vol ? 10 : ui_sel == 2 ? 10 : ui_sel == 5 ? 8 : onoff ? 1 : 4, v = ui_opt[ui_sel];
             if (vol) {                                    /* volumes stop at the ends */
                 if ((edge & P_L) && v > lo) v--;
                 if ((edge & P_R) && v < hi) v++;
@@ -141,14 +145,14 @@ u16 ui_frame(u16 raw, int *run)
     /* continue screens (44-47): the countdown runs; START continues (uses a life) while lives are left,
        otherwise the countdown ends in the game over */
     int cont = scene >= 44 && scene <= 47;
-    if (cont && !in_continue && (edge & P_S) && lives_left) { in_continue = 1; lives_left--; inject(1); }
-    if (cont && !in_continue && (edge2 & P_S) && joined2 && lives2) { in_continue = 1; lives2--; inject2(); }
+    if (cont && !in_continue && (edge & P_S) && lives_left) { in_continue = 1; lives_left -= !LIVES_INF; inject(1); }
+    if (cont && !in_continue && (edge2 & P_S) && joined2 && lives2) { in_continue = 1; lives2 -= !LIVES_INF; inject2(); }
     /* 2P game: a player whose HUD panel shows the prompt joins / comes back with START (one of his lives) */
     if (playing && !cont && !inj_t) {
         if ((edge2 & P_S) && ui_panel_prompt(1)) {
             if (!joined2) { joined2 = 1; lives2 = ui_opt[2] - 1; inject2(); }
-            else if (lives2) { lives2--; inject2(); }
-        } else if ((edge & P_S) && ui_panel_prompt(0) && lives_left) { lives_left--; inject(1); }
+            else if (lives2) { lives2 -= !LIVES_INF; inject2(); }
+        } else if ((edge & P_S) && ui_panel_prompt(0) && lives_left) { lives_left -= !LIVES_INF; inject(1); }
     }
     if (!cont) in_continue = 0;
     if (raw & P_S) in0 &= ~0x10;
@@ -171,17 +175,40 @@ unsigned exp_item(unsigned item, unsigned have)
     if (e > 9999 - h) e = 9999 - h;
     return bin2bcd(e);
 }
+/* V3.19 invincible: called by every sbcd to memory (tools/patch_gen.py): 1 = do not take it (a player's troops), 2 = write 0 (ONEHIT test) */
+int inv_bcd(unsigned ea, unsigned pc)
+{
+    unsigned a = ea & 0xFFFFFF;
+#ifdef INVDBG
+    if (a >= 0xFF8000 && a < 0xFF8400) { volatile u32 *L = (volatile u32 *)0x26007310; u32 i = L[0] & 63; L[2 + i * 2] = pc; L[3 + i * 2] = a; L[0]++; }
+#else
+    (void)pc;
+#endif
+#ifdef ONEHIT
+    if (a != 0xFF8288 && a != 0xFF8289 && a != 0xFF828A && a != 0xFF828B) return 2;   /* test: any other life counter -> 0 */
+#endif
+    if (!ui_opt[6] || !playing) return 0;
+    return a == 0xFF8288 || a == 0xFF8289 || (joined2 && (a == 0xFF828A || a == 0xFF828B));
+}
 void ui_after(void)
 {
     chg_step = ui_opt[0];
     { extern void ui_title_port(void); ui_title_port(); }
+    { extern void ui_end_credit(void); ui_end_credit(); }
     { extern unsigned char fsa_enable; fsa_enable = ui_opt[7] && (playing || FSATEST); }   /* V3.8 full-screen attack (gen/nat.c fsa_*) */
     /* V2.6 invincible: a player's troops (his life, BCD words 0xFF8288 / 0xFF828A, the top left counter) never go
        down: what a hit took is put back after the frame (gains stay); at least 50 so that one hit cannot end it */
     static u16 keep[2];
+#if defined(REPLAY) && defined(INVDBG)
+    playing = 1;
+#endif
     for (int k = 0; k < 2; k++) {
         volatile u8 *t = WRAM + 0x8288 + k * 2;
         u16 v = (t[0] << 8) | t[1];
+#ifdef INVDBG
+        if (ui_opt[6] && playing && !(k && !joined2) && v == 0 && keep[k]) (*(volatile u32 *)0x26007300)++;
+        if (!k) *(volatile u32 *)0x26007304 = (playing << 24) | (ui_opt[6] << 16) | v;
+#endif
         if (!ui_opt[6] || !playing || (k && !joined2) || v == 0) { keep[k] = 0; continue; }
         if (keep[k] && v < keep[k]) v = keep[k];
         if (v < 0x50) v = 0x50;

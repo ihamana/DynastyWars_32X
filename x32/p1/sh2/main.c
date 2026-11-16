@@ -167,7 +167,7 @@ void pads_sample(void) { u16 v = MARS_SYS_COMM0; if (v & 0x4000) pad_raw[1] = v 
 /* render.c msg_send: harbour cell messages sent from the CMD interrupt while the logic runs, per frame
    (the flames are scroll2 cells changing every frame: hundreds of messages, the logic was down to 30 fps) */
 #ifndef LOGIC_MSGS
-#define LOGIC_MSGS 24
+#define LOGIC_MSGS 40
 #endif
 volatile u8 in_logic, logic_missed; volatile int logic_msgs; volatile u32 vint_ticks, vint_busy;
 static volatile u8 logic_due; volatile u32 logic_skipped;
@@ -254,10 +254,19 @@ static void logic_frame(void)
 #endif
         { extern volatile u32 logic_ticks; logic_ticks += (*(volatile u8 *)0xFFFFFE81 - lt0) & 255; }
         ui_after();
+#ifdef NOCREDIT
+        { volatile u8 *w = (volatile u8 *)0x26000000; static u32 kc; if (++kc > NOCREDIT) { w[0x81A2] = 0; w[0x81A3] = 0; } }   /* test: the credits gone (back to the attract demo) */
+#endif
+#ifdef KILLCHAR
+        { volatile u8 *w = (volatile u8 *)0x26000000; static u32 kc; if (++kc > 11000 && w[0x81D8] == w[0x81D7]) w[0x828F] = KILLCHAR; }   /* test: the boss kill picture of another character */
+#endif
 #ifdef STAGESEL
         { volatile u8 *w = (volatile u8 *)0x26000000;          /* test: start in stage STAGESEL (ROUND screen), invincible */
           if (w[0x81D8] == 48 && w[0x81D7] == 0) w[0x81D7] = STAGESEL;
-          w[0x8289] = 0x56; w[0x828B] = 0x56; }
+#ifndef INVTEST
+          w[0x8289] = 0x56; w[0x828B] = 0x56;
+#endif
+        }
 #endif
         frames++; { extern volatile u32 lframes; lframes = frames; }
     }

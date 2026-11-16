@@ -6,7 +6,7 @@ def put(ofs, data, name):
     assert ofs + len(data) <= len(rom), (name, hex(ofs), len(data))
     for a, b, n in used: assert os.environ.get('OVERLAPOK') or ofs + len(data) <= a or ofs >= b, ('overlap', name, n)
     used.append((ofs, ofs + len(data), name)); rom[ofs:ofs + len(data)] = data
-md = open(B + '/md.bin', 'rb').read(); assert len(md) <= 0x6000   # V2.1: pic.bin starts at 0x6000 (tools/mkpic.sh)
+md = open(B + '/md.bin', 'rb').read(); assert len(md) <= 0x6000 or os.environ.get('OVERLAPOK')   # V2.1: pic.bin starts at 0x6000 (tools/mkpic.sh)
 put(0, md, 'md')
 put(0x8000, open(B + '/sh2.bin', 'rb').read(), 'sh2 lo')
 put(0x10000, open(B + '/hot.bin', 'rb').read(), 'hot')
@@ -47,6 +47,7 @@ put(0x180000, prg[0x80000:], 'prg hi')
 put(0x200000, open(B + '/rom.bin', 'rb').read(), 'cold code')
 put(0x152000, open(B + '/rom2.bin', 'rb').read(), 'cold code 2')
 put(0x360000, open(B + '/rom3.bin', 'rb').read(), 'cold code 3')   # sh2.ld rom3 (.rom2ui)
+if os.path.exists(B + '/rom4.bin'): put(0x35D000, open(B + '/rom4.bin', 'rb').read(), 'cold code 4')   # V3.20 sh2.ld rom4
 import os
 if os.path.exists(bg + 's1_wanim.bin'): put(0x330800, open(bg + 's1_wanim.bin', 'rb').read(), 'harbour water (MD)')   # md/bg.c WA_ROM
 pt = bytearray(192)                       # bg priority cells (32X), per stage: u32 cart address[48] at 0x3C0000, blobs in free space

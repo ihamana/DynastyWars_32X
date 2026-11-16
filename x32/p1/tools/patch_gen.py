@@ -99,3 +99,16 @@ for pc, kind in FSA:
         line = m.group(0).replace(body, new, 1)
         open(f, 'w').write(s.replace(m.group(0), line)); print('patched', os.path.basename(f), '%06X' % pc, kind)
     assert hit == 1, ('fsa target', hex(pc), hit)
+
+# V3.19: invincible option on every BCD subtraction from memory (sbcd -(Ay),-(Ax): troops, the object life counters):
+# a hit on a player's troops is not written and the flags say "not zero, no borrow" (the game's own death branch after it
+# is then not taken), ui.c inv_bcd().  V2.6 only put the troops back after the frame, too late when one hit took them all.
+pat = re.compile(r"TR\((0x[0-9A-F]+)\);( C\.a\[\d\] -= 1;  u32 s = RB\(C\.a\[\d\]\); C\.a\[\d\] -= 1;  u32 ea = C\.a\[\d\];) u32 r = bcd_sub\(RB\(ea\), s\); WB\(ea, r\); \}")
+nb = 0
+for f in files:
+    s = open(f).read()
+    s2, n = pat.subn(lambda m: 'TR(%s);%s u32 r = bcd_sub(RB(ea), s); { extern int inv_bcd(unsigned, unsigned); int k_ = inv_bcd(ea, %s); if (k_ == 1) { C.c = C.x = 0; C.z = 0; } else WB(ea, k_ ? 0 : r); } /*INV*/ }' % (m.group(1), m.group(2), m.group(1)), s)
+    if n: open(f, 'w').write(s2); nb += n
+    nb += s.count('/*INV*/')
+print('invincible sbcd sites', nb)
+assert nb == 15, nb

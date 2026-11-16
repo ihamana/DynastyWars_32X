@@ -23,6 +23,7 @@ sh-elf-objcopy -O binary -j .vectors -j .text -j .rodata -j .data $B/sh2.elf $B/
 sh-elf-objcopy -O binary -j .rom $B/sh2.elf $B/rom.bin
 sh-elf-objcopy -O binary -j .rom3 $B/sh2.elf $B/rom3.bin
 sh-elf-objcopy -O binary -j .rom2 $B/sh2.elf $B/rom2.bin
+sh-elf-objcopy -O binary -j .rom4 $B/sh2.elf $B/rom4.bin
 sh-elf-objcopy -O binary -j .hot $B/sh2.elf $B/hot.bin
 SH2_SIZE=$(stat -c %s $B/sh2.bin)
 sym() { sh-elf-nm $B/sh2.elf | awk -v s=$1 '$3==s{print "0x"$1}'; }

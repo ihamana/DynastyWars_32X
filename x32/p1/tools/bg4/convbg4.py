@@ -6,6 +6,20 @@ import cps, mdpal
 NL = int(os.environ.get('NL', '4'))
 scene=int(sys.argv[1]); snap=cps.load_snap(sys.argv[2]); out=sys.argv[3]
 rgb=snap['rgb']; B=snap['B']
+# V3.22 PALZONE=pkl (tools/bg4/palzone.py): the game switches a layer's palettes part way through the stage (stage 8):
+# each cell is coloured with the version that is up while its column is on screen
+ZP={2:{},3:{}}; _ZC={}
+if os.environ.get('PALZONE'):
+    import pickle
+    ZP=pickle.load(open(os.environ['PALZONE'],'rb'))
+def crgb(L,cx):
+    if not ZP[L]: return rgb
+    k=tuple(int(col[min(cx,len(col)-1)]) for p,(col,vs) in sorted(ZP[L].items()))
+    if (L,k) not in _ZC:
+        a=rgb.copy()
+        for (p,(col,vs)),v in zip(sorted(ZP[L].items()),k): a[p*16:p*16+16]=vs[v]
+        _ZC[(L,k)]=a
+    return _ZC[(L,k)]
 PRIO=[B[0x2a//2],B[0x28//2],B[0x26//2],B[0x24//2]]
 layers={}; WO={}
 for L in (2,3):
@@ -57,7 +71,7 @@ for L in (2,3):
             blk=d['pens'][cy*8:cy*8+8,cx*8:cx*8+8]
             m=blk!=255
             if not m.any(): continue
-            cols=rgb[d['pal'][cy,cx]*16+blk[m].astype(int)]
+            cols=crgb(L,cx)[d['pal'][cy,cx]*16+blk[m].astype(int)]
             for col in map(tuple,mdpal.to_md3(cols)): allw[col]+=1
 # ---- palette: 2 lines optimized jointly (cells choose a line; lines refit by weighted k-means)
 cells=[]   # (layer, cy, cx, colors (N,3) float, weights)
@@ -67,7 +81,7 @@ for L in (2,3):
         for cx in range(w):
             blk=d['pens'][cy*8:cy*8+8,cx*8:cx*8+8]; m=blk!=255
             if not m.any(): continue
-            cols=mdpal.md_rgb(mdpal.to_md3(rgb[d['pal'][cy,cx]*16+blk[m].astype(int)]))
+            cols=mdpal.md_rgb(mdpal.to_md3(crgb(L,cx)[d['pal'][cy,cx]*16+blk[m].astype(int)]))
             u,cnt=np.unique(cols,axis=0,return_counts=True)
             cells.append((L,cy,cx,u.astype(np.float32),cnt))
 print('cells',len(cells))
@@ -198,6 +212,8 @@ def addtile(px):
         kk=arr.tobytes()
         if kk in tiles: return tiles[kk],fl
     tiles[k]=len(tilelist); tilelist.append(px.copy()); return tiles[k],0
+SMOOTH=float(os.environ.get('SMOOTH','0')); SMA=float(os.environ.get('SMA','0'))
+LN={L:np.full(layers[L]['pal'].shape,-1,int) for L in (2,3)}
 maps={}
 for L in (2,3):
     d=layers[L]; h,w=d['pal'].shape
@@ -206,14 +222,20 @@ for L in (2,3):
         for cx in range(w):
             blk=d['pens'][cy*8:cy*8+8,cx*8:cx*8+8]; m=blk!=255
             if not m.any(): M[cy,cx]=0; continue
-            cols=rgb[d['pal'][cy,cx]*16+np.minimum(blk,15).astype(int)]
-            best=None
+            cols=crgb(L,cx)[d['pal'][cy,cx]*16+np.minimum(blk,15).astype(int)]
+            best=None; cand={}
             for li in allowed(L,cx):
                 ix=mdpal.nearest(lines[li],cols)
                 err=(((oklab(mdpal.md_rgb(lines[li])[ix])-oklab(cols))**2).sum(-1)[m].sum() if OKL else
                      ((mdpal.md_rgb(lines[li])[ix].astype(float)-cols)**2).sum(-1)[m].sum())
+                cand[li]=(err,li,ix)
                 if best is None or err<best[0]: best=(err,li,ix)
-            _,li,ix=best
+            if SMOOTH:   # V3.18: a neighbour's line when nearly as good (cells flipping between lines: blotches)
+                nb=[int(LN[L][cy,cx-1]) if cx else -1, int(LN[L][cy-1,cx]) if cy else -1]
+                for ln in nb:
+                    if ln in cand and ln!=best[1] and cand[ln][0]<=best[0]*(1+SMOOTH)+SMA*m.sum():
+                        best=cand[ln]; break
+            _,li,ix=best; LN[L][cy,cx]=li
             px=np.where(m,ix+1,0).astype(np.uint8)
             tid,fl=addtile(px)
             li=li if li<2 else 2+(li-2)%2

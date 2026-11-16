@@ -252,8 +252,10 @@ md_vblank:
         movem.l d0-d1/a0-a1,-(sp)
         jsr     md_vblank_count
         tst.w   vdp_busy
-        bne.s   21f
-        jsr     md_vblank_scroll
+        beq.s   22f
+        move.w  #1,sc_late              | V3.21: the main loop does it when its VDP sequence ends
+        bra.s   21f
+22:     jsr     md_vblank_scroll
 21:     movem.l (sp)+,d0-d1/a0-a1
 md_rte: rte
 

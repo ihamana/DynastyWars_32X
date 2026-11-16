@@ -10,6 +10,7 @@ MEMORY
   rom (rx)  : ORIGIN = 0x02200000, LENGTH = 0xE0000
   rom2 (rx) : ORIGIN = 0x02152000, LENGTH = 0x6D00
   rom3 (rx) : ORIGIN = 0x02360000, LENGTH = 0x10000
+  rom4 (rx) : ORIGIN = 0x0235D000, LENGTH = 0x3000
 }
 SECTIONS
 {
@@ -26,5 +27,6 @@ SECTIONS
   .hb (NOLOAD) : { ___hb_start = .; *(.hb) . = ALIGN(4); ___hb_end = .; } > hot
   .rom2 : { *p01.o(.text .text.* .rodata .rodata.*) } > rom2
   .rom3 : { *p05.o(.text .text.* .rodata .rodata.*) *(.rom2ui) *(.rom2uid) *ui.o(.text .text.* .rodata .rodata.*) } > rom3
+  .rom4 : { *p15.o(.text .text.* .rodata .rodata.*) } > rom4   /* V3.20: cold code 4 (the ending code made .rom overflow) */
   .rom : { *(.romui) *(.text) *(.text.*) *(.rodata) *(.rodata.*) } > rom
 }

@@ -19,10 +19,11 @@ extern volatile u32 vcount;
 static const u8 bit8[8] = { 1, 2, 4, 8, 16, 32, 64, 128 };
 static const u32 bit32[32] = { 1u<<0,1u<<1,1u<<2,1u<<3,1u<<4,1u<<5,1u<<6,1u<<7,1u<<8,1u<<9,1u<<10,1u<<11,1u<<12,1u<<13,1u<<14,1u<<15,
     1u<<16,1u<<17,1u<<18,1u<<19,1u<<20,1u<<21,1u<<22,1u<<23,1u<<24,1u<<25,1u<<26,1u<<27,1u<<28,1u<<29,1u<<30,1u<<31 };
-#define BGPRI_SLOT0 224
+static u8 bgpri_slot0 = 224;                  /* V3.18: 224 (2 lines, slots 224-254) or 208 (3 lines, 208-254) */
+#define BGPRI_SLOT0 bgpri_slot0
 static void scan23(u8 *used);
 volatile u32 s23_writes, lut23ver;
-static u16 bgpri_cram[31];
+static u16 bgpri_cram[47];
 /* stage 1 army dust: changed scroll2 cells of tilemap rows 52-55 -> MD (COMM8/COMM10) */
 #define BG_ANIM16 ((const u16 *)0x023DF100)
 static u32 an_raw[64][4] __attribute__((section(".rd2"))); static volatile s16 an_col[64];
@@ -305,6 +306,10 @@ static inline void dy_push(u32 c8, u32 c10) { dy_q[dy_w & 127] = (c8 << 16) | c1
    ~3x longer for a 32x32 scroll3 cell than for a 16x16 scroll2 one, and the docking ships are what shows */
 static volatile u32 dz_q[64] RD1; static volatile u32 dz_w, dz_r;
 static inline void dz_push(u32 c8, u32 c10) { dz_q[dz_w & 63] = (c8 << 16) | c10; dz_w++; }
+/* V3.21: scroll2 cells going back to the static map wait here until the additions (scroll2 and scroll3) are out: when a
+   ship changes layer (the arcade rewrites ~220 scroll2 and ~100 scroll3 cells in one frame, the MD needs ~25 frames) the
+   old picture stays until the new one is there, instead of the ship being gone in between */
+static volatile u16 dyr_q[128]; static volatile u32 dyr_w, dyr_r;   /* COMM8 (COMM10 = 0xFFFF) */
 UI static u32 dy_find(const u32 *t, u32 key)
 {
     int lo = 0, hi = (int)t[0] - 1;
@@ -340,7 +345,7 @@ UI static void dyn3_scan(pk_t *q)
             if (v != o && (v & 0x3FFC007F) == (o & 0x3FFC007F) && (((v >> 16) - (o >> 16)) & 3) == 1) hits++;
         }
     }
-    if (!NOPH && hits >= 3 && dz_w - dz_r < 64) { dy_ph = (dy_ph + 1) & 3; dz_push(0x1000 | (127 << 5) | 30, dy_ph); }
+    if (!NOPH && hits >= 3 && dy_w == dy_r && dyr_w == dyr_r && dz_w - dz_r < 8) {   /* V3.21: not in a burst of cells (the water waits: a phase costs the MD most of a frame) */ dy_ph = (dy_ph + 1) & 3; dz_push(0x1000 | (127 << 5) | 30, dy_ph); }
     static u8 d3_rr;                            /* round robin start (as dyn2_scan) */
     if (d3_rr >= 13) d3_rr = 0;
     for (int k = 0; k < 13; k++) {
@@ -384,6 +389,7 @@ UI static void dyn3_scan(pk_t *q)
    src = MD map column << 6 | row of the same cell (0xFFFE nothing, 0xFFFF the static map).  Messages to the MD:
    COMM8 0x3000 | slot << 6 | row (COMM10 src), 0x3800 | row (row back to static, all slots),
    0x3C00 | slot (COMM10 column: the slot now holds that column, all static).  32 column slots x a ring of 16 rows. */
+static u16 d2_bl[32];   /* V3.21: the cell's last message was 0xFFFE (nothing): see dyr_q */
 static u32 d2_val[32][16] RD2; static u16 d2_ov[32] RD2; static s16 d2_tag[32] RD2;   /* d2_val: the arcade cell last scanned (V1.9; was the source sent) */ static s8 d2_ry[16] RD2; static u8 d2_on, d2_on2;
 UI2 static u32 d2_find(const u32 *t, u32 n, u32 key)
 {
@@ -428,7 +434,7 @@ UI2 static void dyn2_scan(pk_t *q)
     for (int y = ry0; y < ry0 + 14; y++) {
         if ((u32)y >= 48 || d2_ry[y & 15] == y) continue;
         if (dy_w - dy_r > 128 - 4) return;
-        d2_ry[y & 15] = y; for (int s = 0; s < 32; s++) { d2_val[s][y & 15] = 0xFFFFFFFF; d2_ov[s] &= ~(1u << (y & 15)); }
+        d2_ry[y & 15] = y; for (int s = 0; s < 32; s++) { d2_val[s][y & 15] = 0xFFFFFFFF; d2_ov[s] &= ~(1u << (y & 15)); d2_bl[s] &= ~(1u << (y & 15)); }
         for (int i = 0; i < 32; i++) d2dm[i] |= bit32[y & 15];   /* V2.5: the row is looked at again in every column */
         dy_push(0x3800 | y, 0);
     }
@@ -448,7 +454,7 @@ UI2 static void dyn2_scan(pk_t *q)
 #ifdef D2DBG
         cl = c;
 #endif
-        if (d2_tag[sl] != c) { d2_tag[sl] = c; for (int r = 0; r < 16; r++) d2_val[sl][r] = 0xFFFFFFFF; d2_ov[sl] = 0; dy_push(0x3C00 | sl, c); d2dm[sl] = 0xFFFF; }
+        if (d2_tag[sl] != c) { d2_tag[sl] = c; for (int r = 0; r < 16; r++) d2_val[sl][r] = 0xFFFFFFFF; d2_ov[sl] = 0; d2_bl[sl] = 0; dy_push(0x3C00 | sl, c); d2dm[sl] = 0xFFFF; }
         u32 dm = d2dm[sl];
         if (!dm) continue;                          /* V2.5: nothing written in this column since it was last looked at */
         u32 todo = dm & wm;                         /* V3.17: only the marked rows in view, stop when none is left */
@@ -470,6 +476,7 @@ UI2 static void dyn2_scan(pk_t *q)
             u32 bit = bit32[y & 15];
             if (src == 0xFFFF) { if (!(d2_ov[sl] & bit)) continue; d2_ov[sl] &= ~bit; }   /* static already */
             else d2_ov[sl] |= bit;
+            if (src == 0xFFFE) d2_bl[sl] |= bit; else d2_bl[sl] &= ~bit;
             dy_push(0x3000 | (sl << 6) | y, src);
         }
         d2dm[sl] = dm;
@@ -511,14 +518,28 @@ static void msg_send(int acked)
       if (ui_volq) { int k = ui_volq & 1 ? 0 : 1; ui_volq &= ~(1 << k); msg_out = 1; MARS_SYS_COMM8 = 0x2000 | (k << 8) | ui_opt[3 + k]; return; } }
     if (snd_r != snd_w) { msg_out = 1; MARS_SYS_COMM8 = 0x4000 | snd_q[snd_r & 63]; snd_r++; return; }   /* sound command */
     { extern volatile u8 in_logic; extern volatile int logic_msgs;
-      if (acked && in_logic && (dy_r != dy_w || dz_r != dz_w) && --logic_msgs < 0) return; }   /* the rest after the logic (main.c) */
-    if (dy_r != dy_w || dz_r != dz_w) {         /* harbour cell messages (scroll2 first) */
-        u32 m; if (dy_r != dy_w) { m = dy_q[dy_r & 127]; dy_r++; } else { m = dz_q[dz_r & 63]; dz_r++; }
-        msg_out = 1; MARS_SYS_COMM10 = m & 0xFFFF; MARS_SYS_COMM8 = m >> 16;
+      if (acked && in_logic && (dy_r != dy_w || dz_r != dz_w || dyr_r != dyr_w) && --logic_msgs < 0) return; }   /* the rest after the logic (main.c) */
+    if (dy_r != dy_w || dz_r != dz_w || dyr_r != dyr_w) {   /* harbour cell messages: scroll2 additions, scroll3, scroll2 removals */
+        u32 m = 0;
+        while (dy_r != dy_w) {
+            u32 x = dy_q[dy_r & 127]; dy_r++;
+            if ((x >> 28) == 3 && !(x & 0x08000000) && (x & 0xFFFF) >= 0xFFFE && dyr_w - dyr_r < 128) { dyr_q[dyr_w & 127] = (x >> 16) | ((x & 1) ? 0 : 0x8000); dyr_w++; continue; }   /* bit 15: 0xFFFE */
+            m = x; break;
+        }
+        if (!m && dz_r != dz_w) { m = dz_q[dz_r & 63]; dz_r++; }
+        while (!m && dyr_r != dyr_w) {
+            u32 e = dyr_q[dyr_r & 127], bl = e >> 15, x = ((0x3000 | (e & 0x0FFF)) << 16) | (bl ? 0xFFFE : 0xFFFF); dyr_r++;
+            u32 sl = (x >> 22) & 31, y = (x >> 16) & 63, bit = 1u << (y & 15);
+            if (d2_ry[y & 15] == (int)y && (bl ? !(d2_bl[sl] & bit) : (d2_ov[sl] & bit))) continue;   /* rewritten since: that message went out already */
+            m = x;
+        }
+        if (m) {
+            msg_out = 1; MARS_SYS_COMM10 = m & 0xFFFF; MARS_SYS_COMM8 = m >> 16;
 #ifdef D2DBG
-        an_dy++;
+            an_dy++;
 #endif
-        return;
+            return;
+        }
     }
     u8 t = an_tick;
     if (t != an_tick_sent) {                    /* ticks first: the pair values below already include them */
@@ -650,7 +671,7 @@ UI static void snapshot(pk_t *q)   /* V3.15: once a frame: in the cart (room in 
     { static u16 lastsc = 0xffff; static u8 lat, laylat, kill;
       const u8 *w = WRAM_PTR; u16 sc = (w[0x81D7] << 8) | w[0x81D8];
       if (sc != lastsc) {   /* V2.2: scene 8 straight from the stage scene = the boss kill picture (its text in place, unmoved) */
-          kill = w[0x81D8] == 8 && (lastsc >> 8) < 32 && (lastsc & 0xFF) == (lastsc >> 8);
+          kill = w[0x81D8] >= 8 && w[0x81D8] <= 11 && (lastsc >> 8) < 32 && (lastsc & 0xFF) == (lastsc >> 8);   /* V3.21: 8 + character (0x7EE4), not only 張飛 */
           lastsc = sc; lat = 0; laylat = 0; }
       int on23 = ((layerctl & 4) && (q->vc & 4)) || ((layerctl & 8) && (q->vc & 8));
       if (!sel && !hud && w[0x81D8] >= 8 && on23) lat = 1;
@@ -685,7 +706,10 @@ UI static void snapshot(pk_t *q)   /* V3.15: once a frame: in the cart (room in 
       q->stage = w[0x81D7] & 31;
       q->wantv = st1 || w[0x81D8] == 48;     /* the MD may load this stage's background (ROUND screen or in the stage) */
       if (q->layout == 5) { q->stage = (q->stage + 1) & 31; q->wantv = 1; }   /* stage clear results: the next stage */
-      { extern int ui_stage_pending(void); if (!st1 && ui_stage_pending()) q->wantv = 1; } }   /* V2.1: the stage chosen in the options, from the character select on */
+      { extern int ui_stage_pending(void); if (!st1 && ui_stage_pending()) q->wantv = 1; }
+      /* V3.22: attract mode (no players, 0xFF8155): stage 1's background is read in already for the demo (after a game
+         the MD has the last stage's: the demo showed no background for the ~3 s the CD read takes) */
+      if (!st1 && !w[0x8155] && !ui_stage_pending()) { q->stage = 0; q->wantv = 1; } }   /* V2.1: the stage chosen in the options, from the character select on */
     mdpic_pick(q);
     { extern volatile u8 ui_mode, ui_sel, ui_opt[8], ui_six; extern volatile u16 ui_pad, ui_hold;
       q->ui_mode = ui_mode; q->ui_sel = ui_sel; for (int i = 0; i < 7; i++) q->ui_opt[i] = ui_opt[i]; q->ui_fsa = ui_opt[7];
@@ -757,6 +781,29 @@ UI void ui_title_port(void)
         for (int i = 20; i < 22; i++) {
             u32 o = s1off_live(13 + i, 25); const u16 *p = (const u16 *)gptr(o);
             if (o < 0x10000 && p[0] == cw[i][0] && p[0] != 0x6020) slow_ww(0x900000 + o, 0x6020);
+        }
+    }
+    shown = vis;
+}
+/* V3.20: the ending's last screen (吞食天地 第2彈 ~赤壁之戰~ … 敬請期待……終, message 0x34 drawn by 0x4520C straight into
+   scroll1 map cells: 終 at column 50 row 26, 吞 at column 18 row 11) gets the port's staff line in the arcade's 8x8
+   font, two centred lines on screen rows 17 and 19 (map rows 19, 21; the 32X shows map columns 12-51), palette as 終 */
+UI void ui_end_credit(void)
+{
+    static const char l1[] = "32X CD Port & Chinese Translation", l2[] = "by Mana";
+    static u8 shown;
+    extern void slow_ww(u32 a, u32 v);
+    const u16 *e = (const u16 *)gptr(50 * 0x80 + 26 * 4), *t = (const u16 *)gptr(18 * 0x80 + 11 * 4);
+    int vis = e[0] == 0x817a && t[0] == 0x88f8;
+    if (!vis && !shown) return;
+    for (int k = 0; k < 2; k++) {
+        const char *s = k ? l2 : l1; int c0 = k ? 28 : 15, row = k ? 21 : 19;
+        for (int i = 0; s[i]; i++) {
+            u32 off = (c0 + i) * 0x80 + row * 4;
+            u16 want = s[i] == ' ' ? 0x6020 : 0x6000 + s[i];
+            const u16 *p = (const u16 *)gptr(off);
+            if (vis) { if (p[0] != want || p[1] != e[1]) { slow_ww(0x900000 + off, want); slow_ww(0x900000 + off + 2, e[1]); } }
+            else if (p[0] == want && s[i] != ' ') slow_ww(0x900000 + off, 0x6020);
         }
     }
     shown = vis;
@@ -843,7 +890,7 @@ static void build_palette(void)
     for (int i = 0; i < 512; i++) hkey[i] = 0xffff;
     u8 taken[256]; for (int i = 0; i < 256; i++) taken[i] = 0;
     taken[0] = 1; taken[255] = 1;   /* 255: fps digits (debug) or opaque black */
-    for (int q = BGPRI_SLOT0; q < BGPRI_SLOT0 + 31; q++) taken[q] = 1;
+    for (int q = BGPRI_SLOT0; q < 255; q++) taken[q] = 1;
     int ncol = 1, pend_n = 0;
     static u16 pend_m[1024]; static u16 pend_ci[1024];
     cram_build[0] = 0x8000;
@@ -898,7 +945,7 @@ static void build_palette(void)
     int next = ncol;
     u32 tb2 = wdt();
     for (int q = 1; q < 256; q++) if (!taken[q]) cram_build[q] = 0;
-    for (int q = 0; q < 31; q++) cram_build[BGPRI_SLOT0 + q] = bgpri_cram[q];
+    for (int q = BGPRI_SLOT0; q < 255; q++) cram_build[q] = bgpri_cram[q - BGPRI_SLOT0];
     cram_build[255] = FPSON ? 0x7fff : 0x0001;
     for (int p = 0; p < 32; p++) {
         if (!spdirty[p]) continue;
@@ -951,8 +998,8 @@ static int bgpri_stage = -1;
 #define BG_PAL16  ((const u16 *)(BGPRI + 132))
 #define BGP_COL   ((const u16 *)(BGPRI + 200))     /* u16 colidx[w + 1] */
 #define BGP_CELLS ((const u16 *)(BGPRI + ((200 + (BGP_W + 1) * 2 + 3) & ~3)))   /* {u16 row, u16 entry} */
-#define BG_TILES32 ((const u32 *)(BGPRI + *(const u32 *)(BGPRI + 196)))
-static u16 bgpt[2][256];                       /* pen pair -> 2 slots, per palette line */
+#define BG_TILES32 ((const u32 *)(BGPRI + (*(const u32 *)(BGPRI + 196) & 0xFFFFFF)))
+static u16 bgpt[256];                          /* pen pair -> 2 slots of line 0 (V3.18: line L = +16*L on the nonzero ones) */
 static u32 cov[28][2]; static u32 covprev[28][2] RD1, s1prev, pclr;
 static u8 rowpri[128];                         /* map A rows that have priority cells */                         /* screen 8x8 cells covered by sprites */
 UI static void bgpri_init(int st)
@@ -962,20 +1009,27 @@ UI static void bgpri_init(int st)
     bgpri_p = o ? (const u8 *)(0x02000000 + o) : 0;
     if (!bgpri_p) { for (int y = 0; y < 128; y++) rowpri[y] = 0; return; }
     for (int y = 0; y < 128; y++) rowpri[y] = BGP_ROW[y] != 0;
+    /* V3.18: 2 or 3 palette lines (stages 5-8: the colours of their cells did not fit 2 lines of 15: ~200-350 cells
+       were drawn with substitutes, the "colour change" when something passes behind them) */
+    int nl = BGPRI[196] == 3 ? 3 : 2; u32 s0 = nl == 3 ? 208 : 224;
+    if (s0 != bgpri_slot0) { bgpri_slot0 = s0; pal_exact = 1; }   /* slots taken from / given back to the sprites: remap */
+    const u16 *pl2 = (const u16 *)((const u8 *)BG_TILES32 - 32);
     static const u8 l5[8] = { 0, 6, 10, 14, 17, 21, 25, 29 };   /* V3.13: the MD levels as PicoDrive shows them (its non-linear MD output, like the real DAC; V3.11 had 0,4,8,12): the same colour as the MD plane under it */
-    for (int line = 0; line < 2; line++)
+    for (int q = 0; q < 47; q++) bgpri_cram[q] = 0;
+    for (int line = 0; line < nl; line++)
         for (int pen = 1; pen < 16; pen++) {
-            u16 c = BG_PAL16[line * 16 + pen];
+            u16 c = line < 2 ? BG_PAL16[line * 16 + pen] : pl2[pen];
             u16 m = (l5[(c >> 9) & 7] << 10) | (l5[(c >> 5) & 7] << 5) | l5[(c >> 1) & 7];
-            if (line * 16 + pen - 1 < 31) bgpri_cram[line * 16 + pen - 1] = m;
+            if (s0 + line * 16 + pen - 1 < 255) bgpri_cram[line * 16 + pen - 1] = m;
         }
-    for (int line = 0; line < 2; line++)
-        for (int h = 0; h < 16; h++) for (int l = 0; l < 16; l++) {
-            u32 sh = h ? BGPRI_SLOT0 + line * 16 + h - 1 : 0, sl = l ? BGPRI_SLOT0 + line * 16 + l - 1 : 0;
-            if (sh > 254) sh = 254;
-            if (sl > 254) sl = 254;
-            bgpt[line][h * 16 + l] = (sh << 8) | sl;
-        }
+#ifdef BGPRI_COLOUR
+    for (int h = 0; h < 16; h++) for (int l = 0; l < 16; l++) {   /* (slots >= 208: bit 7 marks a pen, see draw_bgpri) */
+        u32 sh = h ? s0 + h - 1 : 0, sl = l ? s0 + l - 1 : 0;
+        bgpt[h * 16 + l] = (sh << 8) | sl;
+    }
+#else
+    for (int h = 0; h < 16; h++) for (int l = 0; l < 16; l++) bgpt[h * 16 + l] = (h ? 0 : 0xFF00) | (l ? 0 : 0xFF);   /* V3.22: pen pair -> keep mask */
+#endif
 }
 static void sprite_cover(void)
 {
@@ -1013,6 +1067,11 @@ static inline int covered(int sx, int sy)          /* any sprite in the 8x8 area
     for (int r = r0; r <= r1; r++) for (int c = c0; c <= c1; c++) if (cov[r][c >> 5] & bit32[c & 31]) return 1;
     return 0;
 }
+#ifdef PADTEST
+#define PADS_(x) #x
+#define PADS(x) PADS_(x)
+void pad_test(volatile u32 *p) { __asm__ volatile(".rept " PADS(PADTEST) "\n nop\n .endr"); p[0] = 1; }
+#endif
 static void draw_bgpri(u8 *fb, int y0, int y1)
 {
     if (!P->bgon || !bgpri_p || bgpri_stage != P->stage) return;
@@ -1032,11 +1091,31 @@ static void draw_bgpri(u8 *fb, int y0, int y1)
         rowsok |= bit32[my - my0];
     }
     if (!rowsok) return;
+#ifdef DBGPRI
+    { volatile u32 *D = (volatile u32 *)0x26007200; D[0] = ax; D[1] = ay; D[2] = mx0; D[3] = my0; D[4] = my1; D[5] = w; D[6] = rowsok; D[7] = P->stage; D[8] = (u32)bgpri_p; D[9] = y0; D[10] = y1; }
+#endif
+    /* V3.22: the screen columns with a sprite in this band's rows: map columns without one are not looked at, and a
+       column's cells (cart, sorted by row) are entered by binary search: the stage 8 bamboo forest (cells top to bottom)
+       took ~20 of the 47 ticks a frame, most of it walking the lists from the top once per band */
+    u32 cm0 = 0, cm1 = 0;
+    { int r0 = y0 >> 3, r1 = (y1 - 1) >> 3; if (r1 > 27) r1 = 27; for (int r = r0; r <= r1; r++) { cm0 |= cov[r][0]; cm1 |= cov[r][1]; } }
+#ifdef PRIALL
+    cm0 = cm1 = 0xFFFFFFFFu;
+#endif
     for (int mx = mx0; mx <= mx0 + 40; mx++) {
         if ((u32)mx >= w) continue;
-        for (u32 k = ci[mx], ke = ci[mx + 1]; k < ke; k++) {
+        { int sx = mx * 8 - ax, c = sx < 0 ? 0 : sx >> 3, c2 = (sx + 7) >> 3; if (c2 > 39) c2 = 39;
+#ifndef NOCOLMASK
+          if (!((c < 32 ? cm0 & bit32[c] : cm1 & bit32[c & 31]) | (c2 < 32 ? cm0 & bit32[c2] : cm1 & bit32[c2 & 31]))) continue;
+#endif
+        }
+        u32 k = ci[mx], ke = ci[mx + 1];
+#ifndef BSMIN
+#define BSMIN 12
+#endif
+        if (ke - k > BSMIN) { u32 lo = k, hi = ke; while (lo < hi) { u32 md = (lo + hi) >> 1; if ((int)cells[md * 2] < my0) lo = md + 1; else hi = md; } k = lo; }   /* (long lists) */
+        for (; k < ke; k++) {
             int my = cells[k * 2];
-            if (my < my0) continue;
             if (my > my1) break;
             if (!(rowsok & bit32[(my - my0) & 31])) continue;
             u16 e = cells[k * 2 + 1];
@@ -1048,14 +1127,16 @@ static void draw_bgpri(u8 *fb, int y0, int y1)
             if (!covered(sx, sy)) continue;
 #endif
             const u32 *t = BG_TILES32 + (((e & 0xFFF) - 1) << 3);
-            const u16 *T = bgpt[(e >> 14) & 1];
-            int hf = e & 0x1000, vf = e & 0x2000;
+            const u16 *T = bgpt; u32 lad = (((e >> 14) & 1) | ((e >> 12) & 2)) * 16;   /* V3.18: line bit 1 in bit 13 (the cells are stored flipped) */
+            const int hf = 0, vf = 0;
             int ra = sy < y0 ? y0 - sy : 0, rb = sy + 8 > y1 ? y1 - sy : 8;
             for (int r = ra; r < rb; r++) {
                 u32 a = t[vf ? 7 - r : r];
                 if (!a) continue;
                 if (hf) { a = ((a & 0x0f0f0f0f) << 4) | ((a >> 4) & 0x0f0f0f0f); a = (a << 24) | ((a & 0xff00) << 8) | ((a >> 8) & 0xff00) | (a >> 24); }
+#ifdef BGPRI_COLOUR
                 u32 o0 = ((u32)T[a >> 24] << 16) | T[(a >> 16) & 255], o1 = ((u32)T[(a >> 8) & 255] << 16) | T[a & 255];
+                o0 += ((o0 >> 7) & 0x01010101u) * lad; o1 += ((o1 >> 7) & 0x01010101u) * lad;   /* the line's slots (pens: slot >= 208) */
                 u8 *d = ov + FB_LINE(sy + r) + sx;
                 if (sx >= 0 && sx + 8 <= SCR_W && !(sx & 1)) {
                     volatile u16 *q = (volatile u16 *)d;
@@ -1068,6 +1149,34 @@ static void draw_bgpri(u8 *fb, int y0, int y1)
                     u8 *f = fb + FB_LINE(sy + r) + sx;
                     for (int k = 0; k < 8; k++) if (px[k] && sx + k >= 0 && sx + k < SCR_W) f[k] = px[k];
                 }
+#else
+                /* V3.21: the occluding pixels are not painted: they are cleared (pixel 0 = the MD plane shows through, and
+                   the MD plane has the very same picture), so the colour is the MD's own on any machine (a painted 32X pixel
+                   could only be near: 5 bits per gun, and PicoDrive adds the priority bit to green) */
+                u32 m0 = ((u32)T[a >> 24] << 16) | T[(a >> 16) & 255], m1 = ((u32)T[(a >> 8) & 255] << 16) | T[a & 255];
+                (void)lad;
+                u8 *f = fb + FB_LINE(sy + r) + sx;
+                /* (16-bit read-modify-write: the frame buffer drops byte writes of 0) */
+#ifdef NORMW
+                { static volatile u32 sink; if (m0 != 0x12345678) { sink = m0 ^ m1; continue; } }
+#endif
+                if (sx >= 0 && sx + 8 <= SCR_W && !(sx & 1)) {
+                    volatile u16 *q = (volatile u16 *)f;
+                    /* (V3.22: a halfword the cell covers whole is just written: frame buffer reads are slow) */
+                    if (!(m0 | m1)) { q[0] = 0; q[1] = 0; q[2] = 0; q[3] = 0; continue; }
+                    { u16 h = m0 >> 16; if (!h) q[0] = 0; else if (h != 0xffff) q[0] = q[0] & h; }
+                    { u16 h = m0; if (!h) q[1] = 0; else if (h != 0xffff) q[1] = q[1] & h; }
+                    { u16 h = m1 >> 16; if (!h) q[2] = 0; else if (h != 0xffff) q[2] = q[2] & h; }
+                    { u16 h = m1; if (!h) q[3] = 0; else if (h != 0xffff) q[3] = q[3] & h; }
+                } else {
+                    u8 px[8] = { m0 >> 24, m0 >> 16, m0 >> 8, m0, m1 >> 24, m1 >> 16, m1 >> 8, m1 };
+                    for (int x = sx & ~1; x < sx + 8; x += 2) {
+                        if (x < 0 || x >= SCR_W) continue;
+                        int k = x - sx; u32 m = ((k >= 0 ? px[k] : 0xff) << 8) | (k + 1 < 8 ? px[k + 1] : 0xff);
+                        if (m != 0xffff) { volatile u16 *q = (volatile u16 *)(fb + FB_LINE(sy + r) + x); *q = *q & m; }
+                    }
+                }
+#endif
             }
         }
     }
@@ -1564,8 +1673,9 @@ UI2 static void hud_balls(s1c_t *tab, u8 *fb, int hud1, int hud2, u32 c0, int ox
 }
 UI2 static void hud_top2(s1c_t *tab, u8 *fb, u32 row, u32 c0, int ox, int ys, int y0, int y1)
 {
-    for (int c = 0; c < 41; c++) { u32 cc = (c0 + c) & 63; if ((cc < 38 || cc > 54) && hm_in(tab, c * 8 - ox)) s1draw(tab, fb, row, cc, c * 8 - ox, ys, y0, y1); }
-    for (u32 cc = 41; cc <= 54; cc++) { int x = ((int)cc - (int)c0) * 8 - ox - 24; if (hm_in(tab, x)) s1draw(tab, fb, row, cc, x, ys, y0, y1); }
+    const u32 last = 54;
+    for (int c = 0; c < 41; c++) { u32 cc = (c0 + c) & 63; if ((cc < 38 || cc > last) && hm_in(tab, c * 8 - ox)) s1draw(tab, fb, row, cc, c * 8 - ox, ys, y0, y1); }
+    for (u32 cc = 41; cc <= last; cc++) { int x = ((int)cc - (int)c0) * 8 - ox - 24; if (hm_in(tab, x)) s1draw(tab, fb, row, cc, x, ys, y0, y1); }
 }
 #if defined(SHOWFPS) || defined(DBGLAY)
 UI2 static void draw_num(u8 *fb, int x, int v);
@@ -1686,7 +1796,8 @@ static void draw_scroll1(u8 *fb, int y0, int y1)
      * (row 3, columns 9-11 / 38-40) drawn in row 4 under the life numbers; the 2P numbers (columns 41-54) 24 px left */
     int hud1 = S1CODE(2, 9) == 0x6220, hud2 = S1CODE(2, 38) == 0x6220;
     int boss = 0;   /* boss life bars (rows 5, 6; columns 41-54, codes 0x6C6x): their right end is past x 320 */
-    if (flags & 8) for (u32 r = 5; r <= 6; r++) for (u32 c = 41; c <= 54; c++) if ((S1CODE(r, c) & 0xFFF0) == 0x6C60) { boss |= 1 << r; break; }
+    if (flags & 8) { for (u32 r = 5; r <= 6; r++) for (u32 c = 54; c >= 41; c--) if ((S1CODE(r, c) & 0xFFF0) == 0x6C60) { boss |= 1 << r; break; }
+        for (u32 r = 7; r <= 10; r++) if ((S1CODE(r, 54) & 0xFFF0) == 0x6C60) boss |= 1 << r; }   /* (rows 7-10: the bar's right end, column 54, is the last to go) */   /* V3.19: rows 5-10 (two bosses: rows 5 and 7; the 2nd bar was not moved, its end cut) */
     int cm = CT(&s1cmon)[0];
 #ifdef SKIPCHK
     if (skchk[cpu_id()]) cm = 0;
@@ -1704,7 +1815,7 @@ static void draw_scroll1(u8 *fb, int y0, int y1)
         if (row == 4 && (hud1 | hud2)) hud_balls(tab, fb, hud1, hud2, c0, ox, ys, y0, y1);
         { int rr = (ys + ((16 + s1y) & 7)) >> 3; if (rr < 0 || rr > 28 || (!(rh & bit32[rr]) && !(ys >= hudy && rr >= 27))) goto next; }
         if (ys >= hudy) hud_strip(tab, fb, ys, y0, y1, hox, hc0);
-        else if ((hud2 && (row == 2 || row == 3)) || ((row == 5 || row == 6) && (boss >> row & 1))) hud_top2(tab, fb, row, c0, ox, ys, y0, y1);   /* V3.2: the boss bars (rows 5, 6, columns 41-54) too */
+        else if ((hud2 && (row == 2 || row == 3)) || (row >= 5 && row <= 10 && (boss >> row & 1))) hud_top2(tab, fb, row, c0, ox, ys, y0, y1);   /* V3.2: the boss bars (V3.19: rows 5-10, columns 41-54) too */
         else if (cmr) {     /* V2.8: only the cells changed / under sprites (cell mode: aligned) */
             int rr = ys >> 3;
             u32 w0 = CT(&s1dm[rr][0])[0], w1 = CT(&s1dm[rr][1])[0], g = s1xg[tab != s1c_m][rr];
@@ -1970,6 +2081,31 @@ UI static void ui_str(u8 *fb, int y0, int y1, int x, int y, const char *t, int p
         }
     }
 }
+/* V3.23: the infinity sign, 13x7 with a 2-pixel stroke, coloured like the arcade font: the stroke takes the '0' glyph's
+   diagonal shading (its colour at the same row + column), the dark edge goes below / right of it as on the digits */
+UI static void ui_inf(u8 *fb, int y0, int y1, int x, int y, int pal)
+{
+    static const char *const m[7] = { "..XXX...XXX..", ".XX.XX.XX.XX.", "XX...XXX...XX", "XX....X....XX", "XX...XXX...XX", ".XX.XX.XX.XX.", "..XXX...XXX.." };
+    if (y + 8 <= y0 || y >= y1) return;
+    s1c_t *tab = cpu_id() ? s1c_s : s1c_m;
+    u32 code = 0x6000 + '0', g = (x >> 3) & 1, k = ((code - 0x6000) << 1) | g;
+    const u8 *px = (const u8 *)s1c_get(tab, k, code, g, pal);
+    u8 edge = px[7 * 8 + 2], grad[16] = { 0 };
+    for (int rr = 0; rr < 7; rr++) for (int c = 0; c < 8; c++) { u8 p = px[rr * 8 + c]; if (p && p != edge && !grad[rr + c]) grad[rr + c] = p; }
+    for (int i = 1; i < 16; i++) if (!grad[i]) grad[i] = grad[i - 1];
+    for (int i = 14; i >= 0; i--) if (!grad[i]) grad[i] = grad[i + 1];
+    #define INF_ON(rr, cc) ((rr) >= 0 && (rr) < 7 && (cc) >= 0 && (cc) < 13 && m[rr][cc] == 'X')
+    for (int rr = 0; rr < 8; rr++) {
+        int yy = y + rr;
+        if (yy < y0 || yy >= y1) continue;
+        u8 *d = fb + FB_LINE(yy) + x;
+        for (int c = 0; c < 14; c++) {
+            if (INF_ON(rr, c)) d[c] = grad[rr + (c * 7 + 6) / 13];
+            else if (INF_ON(rr - 1, c) || INF_ON(rr, c - 1) || INF_ON(rr - 1, c - 1)) d[c] = edge;
+        }
+    }
+    #undef INF_ON
+}
 UI static void ui_draw(u8 *fb, int y0, int y1)
 {
     static const char *const names[10] = { "Charge speed", "Exp. rate", "Lives", "SFX volume", "Music volume", "Stage", "Invincible", "Full-screen attack", "Button test", "Exit" };
@@ -1989,6 +2125,7 @@ UI static void ui_draw(u8 *fb, int y0, int y1)
             if (i == 6 || i == 7) ui_str(fb, y0, y1, 224, y, (i == 7 ? P->ui_fsa : P->ui_opt[6]) ? "ON" : "OFF", c);
             else if (i < 6) {
                 char v[5]; int k = 0, n = P->ui_opt[i];
+                if (i == 2 && n > 9) { ui_inf(fb, y0, y1, 224, y, c); continue; }   /* V3.23: infinite lives */
                 if (i < 2) { v[k++] = 'x'; }
                 if (n >= 10) { v[k++] = '1'; n -= 10; }
                 v[k++] = '0' + n; v[k] = 0;
@@ -2366,6 +2503,11 @@ static void compute_skip(void)
     { static u32 ls[8]; u32 cur[8] = { s1x, s1y, flags, layerctl, s1epoch, P->bgon, P->layout, P->pic }; volatile u32 *K = (volatile u32 *)0x26007004;
       for (int i = 0; i < 8; i++) { if (cur[i] != ls[i]) K[12 + i]++; ls[i] = cur[i]; } }
 #endif
+    { static u8 ltail; if (P->bgtail != ltail) { ltail = P->bgtail; valid[0] = valid[1] = 0; } }
+#ifdef DBGTAIL
+    if (P->bgtail) (*(volatile u32 *)0x26007300)++;
+#endif   /* V3.18: the black under the field (bgtail) on / off:
+                                     both buffers drawn again (rows kept in one buffer kept the black: the stage-clear pictures' subtitle band flickered) */
     u32 m = 0;
     u32 pv = 0; for (int i = 0; i < 32; i++) pv = (pv ^ pver[i]) * 0x01000193u;
     int same = valid[buf] && key == lastkey[buf] && pv == lastpv[buf] && !((16 + s1y) & 7) && !((96 + s1x) & 7) && !(flags & 0x14);
@@ -2592,6 +2734,9 @@ void render_slave(void)
         hw_preclear();
 #endif
         { volatile u16 *d = CT(&cram_next[0]); for (int i = 0; i < 256; i++) d[i] = cram_build[i]; }
+#ifdef DBGCRAM
+        { volatile u16 *d = (volatile u16 *)0x26007200; for (int i = 0; i < 56; i++) d[i] = cram_build[200 + i]; d[56] = bgpri_slot0; d[57] = bgpri_stage; }
+#endif
 #ifdef TSTAT
         ((volatile u32 *)0x26007004)[9] += (wdt() - tf0) & 255;
 #endif

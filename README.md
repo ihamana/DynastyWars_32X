@@ -27,6 +27,25 @@
 模擬器：Genesis Plus EX / PicoDrive 等支援 32X＋Mega-CD 同時使用者（載入 .32x 卡帶，光碟放入 .cue）。
 建置結束會印出 SHA-1；與發佈版相同代表建置完全一致（見下方「可重現性」）。
 
+## Windows 逐步說明
+
+1. 安裝 [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/)（預設的 WSL 2 模式），開啟後等它顯示 Engine running。
+2. 安裝 [Git for Windows](https://git-scm.com/download/win)。
+3. 準備自己的 MAME `dynwar.zip`（parent 集，內含 `dynwarj/`、`dynwara/`），例如放在 `C:\ROM\dynwar.zip`。
+4. 在 PowerShell 下載原始碼並建置：
+
+   ```powershell
+   cd C:\
+   git clone https://github.com/ihamana/DynastyWars_32X.git
+   cd DynastyWars_32X
+   .\build.ps1 C:\ROM\dynwar.zip
+   ```
+
+   若出現「無法執行指令碼」，先執行 `Set-ExecutionPolicy -Scope Process Bypass` 再重跑 `.\build.ps1`。
+5. 成品在 `out\`：用 Genesis Plus EX 等支援 32X＋Mega-CD 的模擬器載入 `DynastyWars_32xM.32x`，光碟放入 `DynastyWars_32xM.cue`（模擬器需要 Mega-CD BIOS）。
+
+注意：硬碟需約 10 GB 空間（Docker 映像與渲染的音樂）。腳本的換行由 `.gitattributes` 固定為 LF；若把 `.sh` 檔改成 CRLF，容器內會無法執行。也可以用 GitHub 的「Download ZIP」取代 `git clone`。
+
 ## 建置流程（`scripts/build_all.sh`）
 
 1. `scripts/rom.py`：從 zip 組出程式 ROM、圖形 ROM、Z80、OKI（檢查 SHA-1）。
@@ -72,5 +91,5 @@
 
 **English summary.** A port of Capcom's CPS1 arcade game *Dynasty Wars* (Japanese set `dynwarj`) to Sega Mega Drive + 32X + Mega-CD.
 This repository contains **no Capcom data**: code, graphics, music and text are regenerated at build time from your own MAME
-`dynwar.zip`. Build with Docker: `./build.sh /path/to/dynwar.zip` (Windows: `.\build.ps1 C:\path\to\dynwar.zip`); output in `out/`.
+`dynwar.zip`. Build with Docker: `./build.sh /path/to/dynwar.zip` (Windows: install Docker Desktop and Git, `git clone` this repository, then `.\build.ps1 C:\path\to\dynwar.zip` in PowerShell); output in `out/`.
 License: CC BY-NC-SA 4.0 for this project's own work (see `LICENSE`); third-party parts keep their own licenses.

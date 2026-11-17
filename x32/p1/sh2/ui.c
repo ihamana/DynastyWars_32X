@@ -163,6 +163,7 @@ u16 ui_frame(u16 raw, int *run)
 }
 /* V2.1 (render.c): a stage chosen in the options is on its way (the MD loads its background / ROUND map early) */
 int ui_stage_pending(void) { return stage_go && playing; }
+int ui_playing(void) { return playing; }   /* V3.24 (render.c): a game is on (continue screens included) */
 /* option hooks called from the translated arcade code (tools/patch_gen.py) */
 unsigned char chg_step = 1;                 /* charge: added per frame instead of 1 */
 static u16 bcd2bin(u16 b) { return ((b >> 12) & 15) * 1000 + ((b >> 8) & 15) * 100 + ((b >> 4) & 15) * 10 + (b & 15); }

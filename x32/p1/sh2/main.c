@@ -257,6 +257,9 @@ static void logic_frame(void)
 #ifdef NOCREDIT
         { volatile u8 *w = (volatile u8 *)0x26000000; static u32 kc; if (++kc > NOCREDIT) { w[0x81A2] = 0; w[0x81A3] = 0; } }   /* test: the credits gone (back to the attract demo) */
 #endif
+#ifdef DIETEST
+        { volatile u8 *w = (volatile u8 *)0x26000000; static u32 kc; if (++kc > DIETEST && kc < DIETEST + 3 && w[0x81D8] == w[0x81D7]) { w[0x8288] = 0; w[0x8289] = 0; } }   /* test: the 1P troops gone (continue screen) */
+#endif
 #ifdef KILLCHAR
         { volatile u8 *w = (volatile u8 *)0x26000000; static u32 kc; if (++kc > 11000 && w[0x81D8] == w[0x81D7]) w[0x828F] = KILLCHAR; }   /* test: the boss kill picture of another character */
 #endif

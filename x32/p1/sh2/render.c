@@ -709,7 +709,9 @@ UI static void snapshot(pk_t *q)   /* V3.15: once a frame: in the cart (room in 
       { extern int ui_stage_pending(void); if (!st1 && ui_stage_pending()) q->wantv = 1; }
       /* V3.22: attract mode (no players, 0xFF8155): stage 1's background is read in already for the demo (after a game
          the MD has the last stage's: the demo showed no background for the ~3 s the CD read takes) */
-      if (!st1 && !w[0x8155] && !ui_stage_pending()) { q->stage = 0; q->wantv = 1; } }   /* V2.1: the stage chosen in the options, from the character select on */
+      /* V3.24: not on the continue screens (no player there either): the MD then read stage 1 in and, back in the
+         stage with the planes on, never read the stage again (no background after a continue) */
+      { extern int ui_playing(void); if (!st1 && !w[0x8155] && !ui_playing()) { q->stage = 0; q->wantv = 1; } } }   /* V2.1: the stage chosen in the options, from the character select on */
     mdpic_pick(q);
     { extern volatile u8 ui_mode, ui_sel, ui_opt[8], ui_six; extern volatile u16 ui_pad, ui_hold;
       q->ui_mode = ui_mode; q->ui_sel = ui_sel; for (int i = 0; i < 7; i++) q->ui_opt[i] = ui_opt[i]; q->ui_fsa = ui_opt[7];

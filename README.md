@@ -1,11 +1,63 @@
-# Dynasty Wars 32xM（天地を喰らう 32X＋Mega-CD 移植）
+##  街機版《吞食天地》Sega CD 32X 移植版 
+##  Dynasty Wars (Arcade) — Sega CD 32X Port
 
-把 CPS1 街機《天地を喰らう》（Dynasty Wars，日版 dynwarj）移植到 **SEGA Mega Drive + 32X + Mega-CD**，目標是儘量無損：
-68000 程式靜態轉譯成 C 在 SH-2 上執行、32X 畫人物與前景、MD 畫背景、Mega-CD 播放 CD 音樂，並附中文化。
+### 本次移植動用了力量之塔(MD+32X+MD-CD)，所有處理器全數上陣：
 
-**本 repo 不含任何 Capcom 的資料。** 圖形、音樂、程式碼、文字都在建置時從你自己的 MAME ROM 檔重新產生。
+• 32X 主 SH-2：靜態轉譯街機 68000 程式，完整還原原版判定、出兵與掉寶邏輯。
+
+• 32X 副 SH-2：負責繪製角色、前景遮擋與 HUD，高負載時由主 SH-2 協同分擔。
+
+• MD 68000＋VDP：處理雙層卷軸背景與動態圖塊（如港口船隻水面、吊橋起伏）。
+
+• MD Z80＋YM2612：即時演算街機音效，無預錄取樣。
+
+• MEGA-CD：播放 CD 音軌與 PCM 人聲，換關時將背景載入 Word RAM。
+
+• 4MB 卡帶：容量 100% 滿載。
+
+### 與街機版的差異
+
+• 【畫質】 角色與 HUD 由 32X 繪製，發色幾乎與街機一致；背景由 MD 處理，每關壓縮為 4 組 15 色（色階略減）。解析度寬度由 384 調整為 320，HUD 重新排版，劇情大圖改為橫向縮放。
+
+• 【聲音】 BGM 錄自街機音源為 CD 音軌，人聲沿用原版 ADPCM，聽感與原版無異。音效由街機 YM2151 轉換至 MD 的 YM2612 即時演奏，整體極為接近，僅極少數音色微異。
+
+• 【流暢度】 絕大多數場景維持 60 FPS；同屏人數過多或港口火燒船等高負載場面約 45～50 FPS。
+
+### 新增要素
+
+支援全中文化、雙人合作，並加入 Options 選單（可調無限命、無敵、全畫面攻擊、選關、集氣與經驗值倍率）。
+
+##   Dynasty Wars (Tenchi wo Kurau) Arcade Port to SEGA MD + 32X + MEGA-CD
+
+### This port harnesses the Tower of Power(MD+32X+MD-CD), utilizing every single processor across all three systems:
+
+• 32X Master SH-2: Runs statically translated arcade 68000 code, preserving 100% of the original hitboxes, enemy spawns, and item drops.
+
+• 32X Slave SH-2: Renders sprites, foreground occlusion, and the HUD, assisted by the Master SH-2 during heavy loads.
+
+• MD 68000 + VDP: Handles dual-layer scrolling backgrounds and tile animations (e.g., harbor ships, water, and drawbridges).
+
+• MD Z80 + YM2612: Synthesizes arcade sound effects in real time without pre-recorded samples.
+
+• MEGA-CD: Streams CD audio tracks and PCM voices, loading stage backgrounds into Word RAM between levels.
+
+• 4MB Cartridge: Packed to 100% capacity.
+
+###  Differences from the Arcade Original
+
+• [Graphics] Sprites and HUD are rendered by the 32X with near-arcade color accuracy. Backgrounds run on the MD, compressed to four 15-color palettes per stage. Horizontal resolution is adjusted from 384 to 320, with a redesigned HUD and horizontally scaled story illustrations.
+
+• [Audio] BGM is recorded directly from arcade hardware onto CD tracks, and voices use the original ADPCM data—matching the arcade experience. SFX are ported from the YM2151 to the MD's YM2612, sounding remarkably close with minor tonal differences.
+
+• [Performance] Runs at a solid 60 FPS in most scenes, dipping to 45–50 FPS during heavy enemy crowds or intense effects like the burning ships at the harbor.
+
+###  New Features
+
+Full Chinese localization, 2-player co-op, and an Options menu (infinite lives, invincibility, screen-clearing attacks, stage select, plus charge and EXP multipliers).
 
 ## 一鍵建置
+
+**本 repo 不含任何 Capcom 的資料。** 圖形、音樂、程式碼、文字都在建置時從你自己的 MAME ROM 檔重新產生。
 
 需要：Docker（Windows / macOS 用 Docker Desktop）、MAME 的 `dynwar.zip`（parent set，內含 `dynwarj/`、`dynwara/` 子資料夾，0.2xx 版以後的標準格式）。
 
@@ -24,7 +76,7 @@
 | `DynastyWars_32xM.32x` | 32X 卡帶 |
 | `DynastyWars_32xM.cue` / `.iso` / `DW_MSU_02–29.wav` | Mega-CD 光碟（資料軌＋28 條 CD 音軌） |
 
-模擬器：Genesis Plus EX / PicoDrive 等支援 32X＋Mega-CD 同時使用者（載入 .32x 卡帶，光碟放入 .cue）。
+模擬器：Genesis Plus EX / PicoDrive 等支援 32X＋Mega-CD 同時使用者（載入 .cue ）。
 建置結束會印出 SHA-1；與發佈版相同代表建置完全一致（見下方「可重現性」）。
 
 ## Windows 逐步說明
@@ -42,7 +94,7 @@
    ```
 
    若出現「無法執行指令碼」，先執行 `Set-ExecutionPolicy -Scope Process Bypass` 再重跑 `.\build.ps1`。
-5. 成品在 `out\`：用 Genesis Plus EX 等支援 32X＋Mega-CD 的模擬器載入 `DynastyWars_32xM.32x`，光碟放入 `DynastyWars_32xM.cue`（模擬器需要 Mega-CD BIOS）。
+5. 成品在 `out\`：用 Genesis Plus EX 等支援 32X＋Mega-CD 的模擬器載入 `DynastyWars_32xM.cue`。
 
 注意：硬碟需約 10 GB 空間（Docker 映像與渲染的音樂）。腳本的換行由 `.gitattributes` 固定為 LF；若把 `.sh` 檔改成 CRLF，容器內會無法執行。也可以用 GitHub 的「Download ZIP」取代 `git clone`。
 

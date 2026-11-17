@@ -98,6 +98,49 @@ Full Chinese localization, 2-player co-op, and an Options menu (infinite lives, 
 
 注意：硬碟需約 10 GB 空間（Docker 映像與渲染的音樂）。腳本的換行由 `.gitattributes` 固定為 LF；若把 `.sh` 檔改成 CRLF，容器內會無法執行。也可以用 GitHub 的「Download ZIP」取代 `git clone`。
 
+## One-click build (English)
+
+**This repository contains no Capcom data.** Graphics, music, code and text are all regenerated at build time from your own MAME ROM file.
+
+You need: Docker (Docker Desktop on Windows / macOS) and MAME's `dynwar.zip` (the parent set, containing the `dynwarj/` and `dynwara/` subfolders: the standard layout since MAME 0.2xx).
+
+```sh
+# Linux / macOS
+./build.sh /path/to/dynwar.zip
+
+# Windows (PowerShell)
+.\build.ps1 C:\path\to\dynwar.zip
+```
+
+The first run downloads the prebuilt SH-2 / 68000 cross-compiler image (`ghcr.io/ihamana/dynastywars32x-toolchain`, built by GitHub Actions from `docker/toolchain.Dockerfile`) and sets up the build environment; after that each build takes about 5 minutes. If the image cannot be downloaded, the cross compilers are built locally instead (about 20–40 minutes, first time only). Output goes to `out/`:
+
+| File | Purpose |
+|---|---|
+| `DynastyWars_32xM.32x` | 32X cartridge |
+| `DynastyWars_32xM.cue` / `.iso` / `DW_MSU_02–29.wav` | Mega-CD disc (data track + 28 CD audio tracks) |
+
+Emulators: any that run 32X and Mega-CD together, such as Genesis Plus EX or PicoDrive (load the `.cue`).
+The build prints SHA-1 hashes at the end; matching the release means the build is bit-identical (see "可重現性" / Reproducibility below).
+
+### Windows step by step
+
+1. Install [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/) (default WSL 2 mode), start it and wait until it shows "Engine running".
+2. Install [Git for Windows](https://git-scm.com/download/win).
+3. Get your own MAME `dynwar.zip` (parent set, containing `dynwarj/` and `dynwara/`), for example at `C:\ROM\dynwar.zip`.
+4. In PowerShell, download the source and build:
+
+   ```powershell
+   cd C:\
+   git clone https://github.com/ihamana/DynastyWars_32X.git
+   cd DynastyWars_32X
+   .\build.ps1 C:\ROM\dynwar.zip
+   ```
+
+   If PowerShell says scripts cannot be run, run `Set-ExecutionPolicy -Scope Process Bypass` first, then `.\build.ps1` again.
+5. The result is in `out\`: load `DynastyWars_32xM.cue` in an emulator that supports 32X + Mega-CD, such as Genesis Plus EX.
+
+Notes: about 10 GB of free disk space is needed (Docker images and the rendered music). Line endings of the scripts are fixed to LF by `.gitattributes`; if the `.sh` files are converted to CRLF they will not run inside the container. "Download ZIP" on GitHub works in place of `git clone`.
+
 ## 建置流程（`scripts/build_all.sh`）
 
 1. `scripts/rom.py`：從 zip 組出程式 ROM、圖形 ROM、Z80、OKI（檢查 SHA-1）。

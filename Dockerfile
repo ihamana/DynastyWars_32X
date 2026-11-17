@@ -1,9 +1,8 @@
 # Dynasty Wars 32xM build environment.  See README.md: ./build.sh /path/to/dynwar.zip
-FROM python:3.13-slim-bookworm
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential wget ca-certificates xz-utils \
-        flex bison libgmp-dev libmpfr-dev libmpc-dev zlib1g-dev && rm -rf /var/lib/apt/lists/*
-COPY docker/toolchain.sh /tmp/toolchain.sh
-RUN bash /tmp/toolchain.sh
+# The cross compilers come prebuilt in the toolchain image (docker/toolchain.Dockerfile); build.sh / build.ps1 pass
+# TOOLCHAIN, pulling the published image or building it locally.
+ARG TOOLCHAIN=ghcr.io/ihamana/dynastywars32x-toolchain:gcc13.2-1
+FROM ${TOOLCHAIN}
 # SGDK 2.11's m68k libgcc.a (the Mega-CD sub CPU program links it: __mulsi3, __divsi3 ...)
 RUN mkdir -p /opt/sgdk && wget -q -O /opt/sgdk/libgcc.a https://raw.githubusercontent.com/Stephane-D/SGDK/v2.11/lib/libgcc.a && \
     echo "8666030a1081078260a8e2b43949d6fa09d77bed  /opt/sgdk/libgcc.a" | sha1sum -c -

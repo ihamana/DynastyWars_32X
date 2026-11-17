@@ -1,0 +1,29 @@
+# Builds the cross-compiler image once and publishes it to the GitHub Container Registry
+# (ghcr.io/<owner>/dynastywars32x-toolchain), so that users' builds skip compiling GCC.
+name: toolchain image
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [docker/toolchain.sh, docker/toolchain.Dockerfile, .github/workflows/toolchain.yml]
+permissions:
+  contents: read
+  packages: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/toolchain.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/dynastywars32x-toolchain:gcc13.2-1
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}

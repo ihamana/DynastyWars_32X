@@ -17,7 +17,7 @@
 .\build.ps1 C:\path\to\dynwar.zip
 ```
 
-第一次會建 Docker 映像（編譯 SH-2 與 68000 交叉編譯器，約 20–40 分鐘），之後每次建置約 5 分鐘。輸出在 `out/`：
+第一次會下載預先編好的 SH-2／68000 交叉編譯器映像（`ghcr.io/ihamana/dynastywars32x-toolchain`，由 GitHub Actions 以 `docker/toolchain.Dockerfile` 建置）並建立建置環境，之後每次建置約 5 分鐘。下載不到時會自動在本機編譯交叉編譯器（約 20–40 分鐘，只有第一次）。輸出在 `out/`：
 
 | 檔案 | 用途 |
 |---|---|

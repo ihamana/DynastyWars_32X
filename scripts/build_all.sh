@@ -2,7 +2,8 @@
 # Dynasty Wars 32xM: everything from the MAME ROM set.  usage: build_all.sh dynwar.zip [OUTDIR]
 # Layout: this repository at /dw, work files in /tmp/dw, toolchains in /opt/tc (sh-elf, m68k-elf), SGDK's
 # m68k libgcc.a at /opt/sgdk/libgcc.a (the Docker image sets all of this up).
-set -e
+set -e -o pipefail                     # (a failing step stops the build: without pipefail "| tail" hid it)
+python3 -c "import numpy, scipy, PIL, openpyxl, fontTools" || { echo "missing Python packages: pip install numpy scipy pillow openpyxl fonttools (see Dockerfile)"; exit 1; }
 ZIP=$(readlink -f "$1"); OUTD=$(readlink -f "${2:-/dw/out}")
 [ -f "$ZIP" ] || { echo "usage: $0 dynwar.zip [outdir]"; exit 1; }
 R=/dw; P1=$R/x32/p1; D=$P1/data; W=/tmp/dw; J=${JOBS:-$(nproc)}

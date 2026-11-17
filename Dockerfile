@@ -12,7 +12,7 @@ RUN mkdir -p /opt/fonts && wget -q -O /opt/fonts/SourceHanSerifTC-VF.ttf \
         https://github.com/adobe-fonts/source-han-serif/raw/2.003R/Variable/TTF/SourceHanSerifTC-VF.ttf && \
     (echo "71354ed752104c8a3cbcff18943c6110d179d01cc6eaaf1aff7ea14c4a447879  /opt/fonts/SourceHanSerifTC-VF.ttf" | sha256sum -c - || \
      echo "WARNING: Source Han Serif file differs from the one the release used: a few Chinese glyphs may differ")
-RUN pip install --no-cache-dir numpy==2.5.3 scipy==1.18.1 pillow==12.3.0 openpyxl==3.1.5
+RUN pip install --no-cache-dir numpy==2.5.3 scipy==1.18.1 pillow==12.3.0 openpyxl==3.1.5 fonttools==4.67.0
 ENV PATH=/opt/tc/sh/bin:/opt/tc/m68k/bin:$PATH
 WORKDIR /dw
 ENTRYPOINT ["/dw/scripts/build_all.sh"]

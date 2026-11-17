@@ -2,16 +2,27 @@ name: docker image
 # Builds the build environment (cross toolchains, fonts, Python packages).  The game itself needs the
 # arcade ROM set, which is not in this repository, so CI stops at checking the tools.
 on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+  packages: read
 jobs:
   image:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker build --platform linux/amd64 -t dynastywars32x .
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: |
+          TC=ghcr.io/ihamana/dynastywars32x-toolchain:gcc13.2-1
+          docker pull --platform linux/amd64 $TC || docker build --platform linux/amd64 -f docker/toolchain.Dockerfile -t $TC .
+          docker build --platform linux/amd64 --build-arg TOOLCHAIN=$TC -t dynastywars32x .
       - run: |
           docker run --rm --entrypoint bash -v "$PWD":/dw dynastywars32x -c '
             set -e; sh-elf-gcc --version | head -1; m68k-elf-gcc --version | head -1
-            python3 -c "import numpy, scipy, PIL, openpyxl; print(numpy.__version__, scipy.__version__, PIL.__version__)"
+            python3 -c "import numpy, scipy, PIL, openpyxl, fontTools; print(numpy.__version__, scipy.__version__, PIL.__version__)"
             gcc -O2 -shared -fPIC -w -I/dw/dw/ref -o /tmp/l.so /dw/d32/tools/dasmlib.c /dw/dw/ref/m68kdasm.c
             g++ -O2 -ffp-contract=off -w -I/dw/third_party/ymfm -I/dw/dw/ref -o /tmp/sndref /dw/dw/ref/sndref.cpp /dw/third_party/ymfm/ymfm_opm.cpp -x c /dw/dw/ref/z80.c
             echo tools ok'
